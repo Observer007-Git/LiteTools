@@ -67,6 +67,88 @@ local function CreateSlider(panel, name, label, settingKey, y)
     return slider
 end
 
+local function CreateMinimapBorderColorButton(panel, y)
+    local button = CreateFrame(
+        "Button",
+        "FansWowToolsMinimapBorderColorButton",
+        panel,
+        "ColorSwatchTemplate"
+    )
+    button:SetPoint("TOPLEFT", 24, y)
+
+    local label = button:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+    label:SetPoint("LEFT", button, "RIGHT", 8, 0)
+    label:SetText("更改小地图边框颜色和透明度")
+    button:SetHitRectInsets(0, -label:GetStringWidth() - 8, 0, 0)
+
+    button:SetScript("OnClick", function(self)
+        local red, green, blue, alpha, wasCustomized = Addon:GetMinimapBorderColor()
+        local currentAlpha = alpha
+        local colorCustomized = wasCustomized
+        local pickerReady = false
+        local function ApplyColor()
+            local newRed, newGreen, newBlue = ColorPickerFrame:GetColorRGB()
+            if pickerReady then
+                currentAlpha = ColorPickerFrame:GetColorAlpha()
+                colorCustomized = true
+            end
+            Addon:SetMinimapBorderColor(
+                newRed,
+                newGreen,
+                newBlue,
+                currentAlpha,
+                colorCustomized
+            )
+            self:SetColorRGB(newRed, newGreen, newBlue)
+        end
+
+        local function ApplyOpacity()
+            local newAlpha = ColorPickerFrame:GetColorAlpha()
+            if newAlpha == currentAlpha then
+                return
+            end
+            currentAlpha = newAlpha
+            local newRed, newGreen, newBlue = ColorPickerFrame:GetColorRGB()
+            Addon:SetMinimapBorderColor(
+                newRed,
+                newGreen,
+                newBlue,
+                currentAlpha,
+                colorCustomized
+            )
+        end
+
+        ColorPickerFrame:SetupColorPickerAndShow({
+            r = red,
+            g = green,
+            b = blue,
+            opacity = alpha,
+            hasOpacity = true,
+            swatchFunc = ApplyColor,
+            opacityFunc = ApplyOpacity,
+            cancelFunc = function()
+                local oldRed, oldGreen, oldBlue, oldAlpha = ColorPickerFrame:GetPreviousValues()
+                Addon:SetMinimapBorderColor(
+                    oldRed,
+                    oldGreen,
+                    oldBlue,
+                    oldAlpha,
+                    wasCustomized
+                )
+                self:SetColorRGB(oldRed, oldGreen, oldBlue)
+            end,
+        })
+        pickerReady = true
+    end)
+
+    button.Refresh = function(self)
+        self:SetColorRGB(Addon:GetMinimapBorderColor())
+    end
+
+    controls[#controls + 1] = button
+    return button
+end
+
 local function RefreshControls()
     for _, control in ipairs(controls) do
         control:Refresh()
@@ -85,19 +167,49 @@ local function CreateSettingsPanel()
     description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
     description:SetText("所有设置即时生效，并自动永久保存。")
 
-    CreateCheckButton(panel, "FansWowToolsAutoDeleteCheck", "自动输入DELETE", "autoTypeDelete", -72)
-    CreateCheckButton(panel, "FansWowToolsSkipCinematicsCheck", "跳过动画", "skipCinematics", -108)
+    CreateCheckButton(panel, "FansWowToolsAutoDeleteCheck", "删除物品自动输入 DELETE", "autoTypeDelete", -72)
+    CreateCheckButton(panel, "FansWowToolsSkipCinematicsCheck", "空格跳过动画", "skipCinematics", -108)
     CreateSlider(panel, "FansWowToolsExperienceWidthSlider", "经验条缩放", "experienceBarWidth", -170)
-    CreateSlider(panel, "FansWowToolsReputationWidthSlider", "声望条缩放", "reputationBarWidth", -238)
-    CreateCheckButton(panel, "FansWowToolsFixedMicroMenuCheck", "菜单栏固定", "fixedMicroMenu", -292)
+    CreateCheckButton(
+        panel,
+        "FansWowToolsHideExperienceBarCheck",
+        "隐藏经验条",
+        "hideExperienceBar",
+        -210
+    )
+    CreateSlider(panel, "FansWowToolsReputationWidthSlider", "声望条缩放", "reputationBarWidth", -258)
+    CreateCheckButton(
+        panel,
+        "FansWowToolsHideReputationBarCheck",
+        "隐藏声望条",
+        "hideReputationBar",
+        -298
+    )
+    CreateCheckButton(panel, "FansWowToolsFixedMicroMenuCheck", "将眼睛固定在左侧", "fixedMicroMenu", -334)
     CreateCheckButton(
         panel,
         "FansWowToolsInstanceProgressCheck",
-        "鼠标放到日历显示副本进度",
+        "鼠标放到时间上显示副本进度",
         "showInstanceProgress",
-        -328
+        -370
     )
-    CreateCheckButton(panel, "FansWowToolsAutoSellJunkCheck", "自动售卖垃圾", "autoSellJunk", -364)
+    CreateCheckButton(
+        panel,
+        "FansWowToolsMinimapBorderCheck",
+        "替换小地图边框",
+        "replaceMinimapBorder",
+        -406
+    )
+    CreateMinimapBorderColorButton(panel, -442)
+    CreateCheckButton(panel, "FansWowToolsAutoSellJunkCheck", "自动售卖垃圾", "autoSellJunk", -478)
+    CreateCheckButton(panel, "FansWowToolsHideChildBagsCheck", "隐藏子背包", "hideChildBags", -514)
+    CreateCheckButton(
+        panel,
+        "FansWowToolsActionBarHotkeyAliasesCheck",
+        "自定义动作条快捷键显示别名（只支持原生动作条）",
+        "customActionBarHotkeyAliases",
+        -550
+    )
 
     panel:SetScript("OnShow", RefreshControls)
 

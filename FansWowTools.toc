@@ -4,7 +4,7 @@
 ## Notes: A small collection of quality-of-life tools.
 ## Notes-zhCN: 一组可独立设置的魔兽世界便捷小工具。
 ## Author: Fan
-## Version: 1.1.2
+## Version: 1.8.0
 ## SavedVariables: FansWowToolsDB
 
 Core.lua
