@@ -1,15 +1,24 @@
 local ADDON_NAME, Addon = ...
 
 local DEFAULT_STATUS_BAR_WIDTH = 571
+local CUSTOM_MINIMAP_BORDER_TEXTURE =
+    "Interface\\AddOns\\" .. ADDON_NAME .. "\\UIMinimap2x-steel-ring"
+local MINIMAP_BORDER_WIDTH_SCALE = 215 / 198
+local MINIMAP_BORDER_HEIGHT_SCALE = 226 / 198
 
 local DEFAULTS = {
     autoTypeDelete = false,
     skipCinematics = false,
     experienceBarWidth = DEFAULT_STATUS_BAR_WIDTH,
     reputationBarWidth = DEFAULT_STATUS_BAR_WIDTH,
+    hideExperienceBar = false,
+    hideReputationBar = false,
     fixedMicroMenu = false,
     showInstanceProgress = false,
+    replaceMinimapBorder = false,
     autoSellJunk = false,
+    hideChildBags = false,
+    customActionBarHotkeyAliases = false,
 }
 
 Addon.defaults = DEFAULTS
@@ -19,15 +28,53 @@ local db
 
 local menuOriginalGetPosition
 local menuFixedGetPosition
+local microMenuSettingApplied = false
+local microMenuUpdatePending = false
+local statusBarOriginalCanShow
+local statusBarFilteredCanShow
 local barHooksInstalled = false
+local barVisibilityHookInstalled = false
 local cinematicHooksInstalled = false
 local deleteHookInstalled = false
 local clockHookInstalled = false
+local minimapBorderHookInstalled = false
 local barResizePending = false
 local barUpdateQueued = false
+local minimapBorderUpdateQueued = false
+local minimapBorderTexture
+local minimapDefaultBorderWasShown
+local minimapBorderApplied = false
+local bagBarHooksInstalled = false
+local bagBarOriginalHideExpandToggle
+local bagBarSettingApplied = false
+local bagBarUpdatePending = false
+local actionBarHotkeyHookInstalled = false
+local actionBarHotkeySettingApplied = false
+local actionBarHotkeyUpdatePending = false
 local junkSaleTicker
 local junkSaleQueue = {}
 local junkSaleIndex = 1
+
+local CHILD_BAG_BUTTON_NAMES = {
+    "CharacterBag0Slot",
+    "CharacterBag1Slot",
+    "CharacterBag2Slot",
+    "CharacterBag3Slot",
+    "CharacterReagentBag0Slot",
+}
+
+local HOTKEY_ALIASES = {
+    MOUSEWHEELUP = "MU",
+    MOUSEWHEELDOWN = "MD",
+    PAGEUP = "PU",
+    PAGEDOWN = "PD",
+}
+
+local HOTKEY_MODIFIER_ALIASES = {
+    SHIFT = "S",
+    CTRL = "C",
+    ALT = "A",
+}
 
 local instanceCache = {
     ready = false,
@@ -60,9 +107,25 @@ local function InitializeDatabase()
 
     db.autoTypeDelete = not not db.autoTypeDelete
     db.skipCinematics = not not db.skipCinematics
+    db.hideExperienceBar = not not db.hideExperienceBar
+    db.hideReputationBar = not not db.hideReputationBar
     db.fixedMicroMenu = not not db.fixedMicroMenu
     db.showInstanceProgress = not not db.showInstanceProgress
+    db.replaceMinimapBorder = not not db.replaceMinimapBorder
+    db.minimapBorderColorR = Clamp(tonumber(db.minimapBorderColorR) or 1, 0, 1)
+    db.minimapBorderColorG = Clamp(tonumber(db.minimapBorderColorG) or 1, 0, 1)
+    db.minimapBorderColorB = Clamp(tonumber(db.minimapBorderColorB) or 1, 0, 1)
+    db.minimapBorderColorA = Clamp(tonumber(db.minimapBorderColorA) or 1, 0, 1)
+    if db.minimapBorderColorCustomized == nil then
+        db.minimapBorderColorCustomized = db.minimapBorderColorR ~= 1
+            or db.minimapBorderColorG ~= 1
+            or db.minimapBorderColorB ~= 1
+    else
+        db.minimapBorderColorCustomized = not not db.minimapBorderColorCustomized
+    end
     db.autoSellJunk = not not db.autoSellJunk
+    db.hideChildBags = not not db.hideChildBags
+    db.customActionBarHotkeyAliases = not not db.customActionBarHotkeyAliases
     db.experienceBarWidth = math.floor(Clamp(db.experienceBarWidth, 200, 1200) + 0.5)
     db.reputationBarWidth = math.floor(Clamp(db.reputationBarWidth, 200, 1200) + 0.5)
 end
@@ -72,6 +135,46 @@ function Addon:GetSetting(key)
         return db[key]
     end
     return DEFAULTS[key]
+end
+
+local function HasCustomStatusBarWidths()
+    return db
+        and (
+            db.experienceBarWidth ~= DEFAULT_STATUS_BAR_WIDTH
+            or db.reputationBarWidth ~= DEFAULT_STATUS_BAR_WIDTH
+        )
+end
+
+local function HasHiddenStatusBars()
+    return db and (db.hideExperienceBar or db.hideReputationBar)
+end
+
+local function SetEventEnabled(event, enabled)
+    if enabled then
+        eventFrame:RegisterEvent(event)
+    else
+        eventFrame:UnregisterEvent(event)
+    end
+end
+
+local function UpdateFeatureEventRegistrations()
+    if not db then
+        return
+    end
+
+    SetEventEnabled("UPDATE_INSTANCE_INFO", db.showInstanceProgress)
+    SetEventEnabled("BOSS_KILL", db.showInstanceProgress)
+    SetEventEnabled("MERCHANT_SHOW", db.autoSellJunk)
+    SetEventEnabled("MERCHANT_CLOSED", db.autoSellJunk)
+    SetEventEnabled("DISPLAY_SIZE_CHANGED", db.replaceMinimapBorder)
+    SetEventEnabled("UI_SCALE_CHANGED", db.replaceMinimapBorder)
+    SetEventEnabled(
+        "EDIT_MODE_LAYOUTS_UPDATED",
+        db.fixedMicroMenu
+            or db.hideChildBags
+            or db.replaceMinimapBorder
+            or HasCustomStatusBarWidths()
+    )
 end
 
 local function GetBarWidth(barIndex)
@@ -148,38 +251,423 @@ local function QueueStatusBarWidthUpdate()
     end)
 end
 
+local function IsStatusBarHidden(barIndex)
+    local barsEnum = StatusTrackingBarInfo and StatusTrackingBarInfo.BarsEnum
+    if not barsEnum then
+        return false
+    end
+
+    return (barIndex == barsEnum.Experience and db.hideExperienceBar)
+        or (barIndex == barsEnum.Reputation and db.hideReputationBar)
+end
+
+local function ApplyStatusBarVisibility()
+    local manager = StatusTrackingBarManager
+    if manager and manager.UpdateBarsShown then
+        manager:UpdateBarsShown()
+    end
+end
+
+local function InstallStatusBarVisibilityHook()
+    local manager = StatusTrackingBarManager
+    if barVisibilityHookInstalled or not manager or not manager.CanShowBar then
+        return
+    end
+
+    statusBarOriginalCanShow = manager.CanShowBar
+    statusBarFilteredCanShow = function(self, barIndex)
+        if IsStatusBarHidden(barIndex) then
+            return false
+        end
+        return statusBarOriginalCanShow(self, barIndex)
+    end
+    manager.CanShowBar = statusBarFilteredCanShow
+
+    barVisibilityHookInstalled = true
+end
+
+local function UninstallStatusBarVisibilityHook()
+    local manager = StatusTrackingBarManager
+    if barVisibilityHookInstalled
+        and manager
+        and manager.CanShowBar == statusBarFilteredCanShow
+    then
+        manager.CanShowBar = statusBarOriginalCanShow
+        statusBarOriginalCanShow = nil
+        statusBarFilteredCanShow = nil
+        barVisibilityHookInstalled = false
+    end
+end
+
 local function InstallStatusBarHooks()
     if barHooksInstalled or not StatusTrackingBarContainerMixin then
         return
     end
 
     hooksecurefunc(StatusTrackingBarContainerMixin, "SetShownBar", function(container, barIndex)
-        ResizeStatusBarContainer(container, barIndex)
+        if HasCustomStatusBarWidths() then
+            ResizeStatusBarContainer(container, barIndex)
+        end
     end)
 
     barHooksInstalled = true
-    ApplyStatusBarWidths()
 end
 
 local function ApplyMicroMenuSetting()
     local container = MicroMenuContainer
     local positionEnum = MicroMenuPositionEnum
-    if not container or not positionEnum or not positionEnum.BottomRight then
+    if not db or not container or not positionEnum or not positionEnum.BottomRight then
         return
     end
 
+    if not db.fixedMicroMenu and not microMenuSettingApplied then
+        return
+    end
+
+    if InCombatLockdown() then
+        microMenuUpdatePending = true
+        return
+    end
+
+    microMenuUpdatePending = false
     if not menuOriginalGetPosition then
         menuOriginalGetPosition = container.GetPosition
-        menuFixedGetPosition = function()
+        menuFixedGetPosition = function(self)
+            local originalPosition = menuOriginalGetPosition(self)
+            if originalPosition == positionEnum.TopLeft
+                or originalPosition == positionEnum.TopRight
+            then
+                return positionEnum.TopRight
+            end
             return positionEnum.BottomRight
         end
     end
 
     if db.fixedMicroMenu then
         container.GetPosition = menuFixedGetPosition
+        microMenuSettingApplied = true
     elseif container.GetPosition == menuFixedGetPosition then
         container.GetPosition = menuOriginalGetPosition
+        microMenuSettingApplied = false
+    else
+        microMenuSettingApplied = false
     end
+
+    if container.Layout then
+        container:Layout()
+    elseif MicroMenu and MicroMenu.Layout then
+        MicroMenu:Layout()
+    end
+end
+
+local function HideChildBagControls()
+    if BagBarExpandToggle then
+        BagBarExpandToggle:Hide()
+    end
+
+    for _, buttonName in ipairs(CHILD_BAG_BUTTON_NAMES) do
+        local button = _G[buttonName]
+        if button then
+            button:Hide()
+        end
+    end
+
+    if MainMenuBarBackpackButton then
+        MainMenuBarBackpackButton:Show()
+    end
+end
+
+local function CollapseBagBar()
+    if not BagsBar or not MainMenuBarBackpackButton then
+        return
+    end
+
+    local width, height = MainMenuBarBackpackButton:GetSize()
+    if width and height and width > 0 and height > 0 then
+        BagsBar:SetSize(width, height)
+    end
+end
+
+local function InstallBagBarHooks()
+    if bagBarHooksInstalled or not BagsBar or not BagsBar.Layout then
+        return
+    end
+
+    hooksecurefunc(BagsBar, "Layout", function()
+        if db and db.hideChildBags then
+            if InCombatLockdown() then
+                bagBarUpdatePending = true
+                return
+            end
+            HideChildBagControls()
+            CollapseBagBar()
+        end
+    end)
+
+    bagBarHooksInstalled = true
+end
+
+local function ApplyChildBagSetting()
+    if not db or not BagsBar or not MainMenuBarBackpackButton then
+        return
+    end
+
+    if not db.hideChildBags and not bagBarSettingApplied then
+        return
+    end
+
+    if InCombatLockdown() then
+        bagBarUpdatePending = true
+        return
+    end
+
+    bagBarUpdatePending = false
+
+    if db.hideChildBags then
+        InstallBagBarHooks()
+        if not bagBarSettingApplied then
+            bagBarOriginalHideExpandToggle = BagsBar.hideExpandToggle
+        end
+        bagBarSettingApplied = true
+        BagsBar.hideExpandToggle = true
+        HideChildBagControls()
+        if BagsBar.Layout then
+            BagsBar:Layout()
+        end
+        CollapseBagBar()
+        return
+    end
+
+    BagsBar.hideExpandToggle = bagBarOriginalHideExpandToggle
+    if MainMenuBarBagManager and MainMenuBarBagManager.OnExpandBarChanged then
+        MainMenuBarBagManager:OnExpandBarChanged()
+    end
+
+    if BagBarExpandToggle then
+        BagBarExpandToggle:SetShown(not BagsBar.hideExpandToggle)
+    end
+    if BagsBar.Layout then
+        BagsBar:Layout()
+    end
+    bagBarSettingApplied = false
+end
+
+local function GetHotkeyAliasPart(keyPart)
+    local alias = HOTKEY_ALIASES[keyPart]
+    if alias then
+        return alias
+    end
+
+    local numpadNumber = keyPart:match("^NUMPAD(%d)$")
+    if numpadNumber then
+        return "N" .. numpadNumber
+    end
+
+    local mouseButton = keyPart:match("^BUTTON(%d+)$")
+    if mouseButton then
+        return "M" .. mouseButton
+    end
+
+    local localizedText = GetBindingText(keyPart, 1)
+    if localizedText and localizedText ~= "" then
+        return localizedText
+    end
+    return keyPart
+end
+
+local function GetHotkeyAlias(key)
+    local parts = {}
+    local remainingKey = key
+
+    while true do
+        local modifier, nextKey = remainingKey:match("^([^-]+)%-(.+)$")
+        local modifierAlias = modifier and HOTKEY_MODIFIER_ALIASES[modifier]
+        if not modifierAlias then
+            break
+        end
+
+        parts[#parts + 1] = modifierAlias
+        remainingKey = nextKey
+    end
+
+    parts[#parts + 1] = GetHotkeyAliasPart(remainingKey)
+    return table.concat(parts, "+")
+end
+
+local function ApplyHotkeyAliasToButton(button)
+    if not db
+        or not db.customActionBarHotkeyAliases
+        or not button
+        or not button.HotKey
+        or not button.bindingAction
+    then
+        return
+    end
+
+    local key = GetBindingKey(button.bindingAction)
+    local buttonName = button:GetName()
+    if not key and buttonName then
+        key = GetBindingKey("CLICK " .. buttonName .. ":LeftButton")
+    end
+    if not key or IsBindingForGamePad(key) then
+        return
+    end
+
+    local alias = GetHotkeyAlias(key)
+    if alias ~= "" then
+        button.HotKey:SetText(alias)
+    end
+end
+
+local function InstallActionBarHotkeyHook()
+    if actionBarHotkeyHookInstalled
+        or not ActionBarActionButtonMixin
+        or not ActionBarActionButtonMixin.UpdateHotkeys
+    then
+        return
+    end
+
+    hooksecurefunc(ActionBarActionButtonMixin, "UpdateHotkeys", ApplyHotkeyAliasToButton)
+    actionBarHotkeyHookInstalled = true
+end
+
+local function RefreshActionBarHotkey(button)
+    if button and button.UpdateHotkeys then
+        button:UpdateHotkeys(button.buttonType)
+    end
+end
+
+local function ApplyActionBarHotkeySetting()
+    if not db or not ActionBarButtonEventsFrame or not ActionBarButtonEventsFrame.ForEachFrame then
+        return
+    end
+
+    local shouldApply = db.customActionBarHotkeyAliases
+    if not shouldApply and not actionBarHotkeySettingApplied then
+        return
+    end
+
+    if InCombatLockdown() then
+        actionBarHotkeyUpdatePending = true
+        return
+    end
+
+    actionBarHotkeyUpdatePending = false
+    if shouldApply then
+        InstallActionBarHotkeyHook()
+        if not actionBarHotkeyHookInstalled then
+            return
+        end
+    end
+    ActionBarButtonEventsFrame:ForEachFrame(RefreshActionBarHotkey)
+    actionBarHotkeySettingApplied = shouldApply
+end
+
+local function EnsureMinimapBorderTexture()
+    if minimapBorderTexture then
+        return minimapBorderTexture
+    end
+
+    if not Minimap or not MinimapBackdrop or not MinimapCompassTexture then
+        return nil
+    end
+
+    minimapBorderTexture = MinimapBackdrop:CreateTexture(
+        "FansWowToolsMinimapBorder",
+        "OVERLAY",
+        nil,
+        3
+    )
+    minimapBorderTexture:SetTexture(CUSTOM_MINIMAP_BORDER_TEXTURE)
+    minimapBorderTexture:SetTexCoord(1 / 512, 439 / 512, 58 / 1024, 518 / 1024)
+    local red = db.minimapBorderColorR
+    local green = db.minimapBorderColorG
+    local blue = db.minimapBorderColorB
+    minimapBorderTexture:SetDesaturated(db.minimapBorderColorCustomized)
+    minimapBorderTexture:SetVertexColor(red, green, blue)
+    minimapBorderTexture:SetAlpha(db.minimapBorderColorA)
+    minimapBorderTexture:SetPoint("CENTER", Minimap, "CENTER")
+    minimapBorderTexture:Hide()
+    return minimapBorderTexture
+end
+
+local function ResizeMinimapBorder()
+    local texture = EnsureMinimapBorderTexture()
+    if not texture or not Minimap then
+        return
+    end
+
+    local width, height = Minimap:GetSize()
+    if not width or not height or width <= 0 or height <= 0 then
+        return
+    end
+
+    texture:SetSize(
+        width * MINIMAP_BORDER_WIDTH_SCALE,
+        height * MINIMAP_BORDER_HEIGHT_SCALE
+    )
+end
+
+local function ApplyMinimapBorderSetting()
+    if not MinimapCompassTexture then
+        return
+    end
+
+    if db.replaceMinimapBorder then
+        local texture = EnsureMinimapBorderTexture()
+        if not texture then
+            return
+        end
+        if not minimapBorderApplied then
+            minimapDefaultBorderWasShown = MinimapCompassTexture:IsShown()
+            minimapBorderApplied = true
+        end
+        ResizeMinimapBorder()
+        MinimapCompassTexture:Hide()
+        texture:Show()
+    else
+        if minimapBorderTexture then
+            minimapBorderTexture:Hide()
+        end
+        if minimapBorderApplied then
+            MinimapCompassTexture:SetShown(minimapDefaultBorderWasShown)
+            minimapBorderApplied = false
+        end
+    end
+end
+
+local function QueueMinimapBorderUpdate()
+    if minimapBorderUpdateQueued then
+        return
+    end
+
+    minimapBorderUpdateQueued = true
+    C_Timer.After(0, function()
+        minimapBorderUpdateQueued = false
+        ApplyMinimapBorderSetting()
+    end)
+end
+
+local function InstallMinimapBorderHook()
+    if minimapBorderHookInstalled or not Minimap then
+        return
+    end
+
+    Minimap:HookScript("OnSizeChanged", function()
+        if db.replaceMinimapBorder then
+            QueueMinimapBorderUpdate()
+        end
+    end)
+
+    if MinimapCompassTexture then
+        hooksecurefunc(MinimapCompassTexture, "Show", function(texture)
+            if db and db.replaceMinimapBorder then
+                texture:Hide()
+            end
+        end)
+    end
+
+    minimapBorderHookInstalled = true
 end
 
 local function FillDeleteConfirmation()
@@ -371,8 +859,9 @@ local function StartJunkSale()
     end
 
     local poorQuality = Enum.ItemQuality.Poor
-    for bag = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS do
-        local slotCount = C_Container.GetContainerNumSlots(bag)
+    local equippedBagSlots = tonumber(NUM_TOTAL_EQUIPPED_BAG_SLOTS) or 0
+    for bag = 0, equippedBagSlots do
+        local slotCount = tonumber(C_Container.GetContainerNumSlots(bag)) or 0
         for slot = 1, slotCount do
             local itemInfo = C_Container.GetContainerItemInfo(bag, slot)
             if itemInfo
@@ -410,14 +899,36 @@ function Addon:SetSetting(key, value)
     end
 
     db[key] = value
+    UpdateFeatureEventRegistrations()
 
     if key == "experienceBarWidth" or key == "reputationBarWidth" then
+        InstallStatusBarHooks()
         QueueStatusBarWidthUpdate()
+    elseif key == "hideExperienceBar" or key == "hideReputationBar" then
+        if value then
+            InstallStatusBarVisibilityHook()
+        elseif not HasHiddenStatusBars() then
+            UninstallStatusBarVisibilityHook()
+        end
+        ApplyStatusBarVisibility()
     elseif key == "fixedMicroMenu" then
         ApplyMicroMenuSetting()
+    elseif key == "replaceMinimapBorder" then
+        if value then
+            InstallMinimapBorderHook()
+        end
+        QueueMinimapBorderUpdate()
+    elseif key == "hideChildBags" then
+        ApplyChildBagSetting()
+    elseif key == "customActionBarHotkeyAliases" then
+        ApplyActionBarHotkeySetting()
     elseif key == "autoTypeDelete" and value then
+        InstallDeleteHook()
         C_Timer.After(0, FillDeleteConfirmation)
+    elseif key == "skipCinematics" and value then
+        InstallCinematicHooks()
     elseif key == "showInstanceProgress" and value then
+        InstallClockHook()
         RefreshSavedInstances(true)
     elseif key == "showInstanceProgress" then
         instanceCache.ready = false
@@ -431,13 +942,78 @@ function Addon:SetSetting(key, value)
     end
 end
 
+function Addon:GetMinimapBorderColor()
+    if not db then
+        return 1, 1, 1, 1, false
+    end
+    return db.minimapBorderColorR,
+        db.minimapBorderColorG,
+        db.minimapBorderColorB,
+        db.minimapBorderColorA,
+        db.minimapBorderColorCustomized
+end
+
+function Addon:SetMinimapBorderColor(red, green, blue, alpha, customized)
+    if not db then
+        return
+    end
+
+    red = Clamp(red, 0, 1)
+    green = Clamp(green, 0, 1)
+    blue = Clamp(blue, 0, 1)
+    alpha = Clamp(tonumber(alpha) or 1, 0, 1)
+    if customized == nil then
+        customized = true
+    else
+        customized = not not customized
+    end
+    if db.minimapBorderColorR == red
+        and db.minimapBorderColorG == green
+        and db.minimapBorderColorB == blue
+        and db.minimapBorderColorA == alpha
+        and db.minimapBorderColorCustomized == customized
+    then
+        return
+    end
+
+    db.minimapBorderColorR = red
+    db.minimapBorderColorG = green
+    db.minimapBorderColorB = blue
+    db.minimapBorderColorA = alpha
+    db.minimapBorderColorCustomized = customized
+    if minimapBorderTexture then
+        minimapBorderTexture:SetDesaturated(customized)
+        minimapBorderTexture:SetVertexColor(red, green, blue)
+        minimapBorderTexture:SetAlpha(alpha)
+    end
+end
+
 local function FinishInitialization()
-    InstallDeleteHook()
-    InstallCinematicHooks()
-    InstallStatusBarHooks()
-    InstallClockHook()
+    if db.autoTypeDelete then
+        InstallDeleteHook()
+    end
+    if db.skipCinematics then
+        InstallCinematicHooks()
+    end
+    if HasCustomStatusBarWidths() then
+        InstallStatusBarHooks()
+        ApplyStatusBarWidths()
+    end
+    if HasHiddenStatusBars() then
+        InstallStatusBarVisibilityHook()
+        ApplyStatusBarVisibility()
+    end
+    if db.showInstanceProgress then
+        InstallClockHook()
+    end
+    if db.replaceMinimapBorder then
+        InstallMinimapBorderHook()
+        ApplyMinimapBorderSetting()
+    end
+
     ApplyMicroMenuSetting()
-    ApplyStatusBarWidths()
+    ApplyChildBagSetting()
+    ApplyActionBarHotkeySetting()
     if db.showInstanceProgress then
         RefreshSavedInstances()
     end
@@ -453,29 +1029,79 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             eventFrame:RegisterEvent("PLAYER_LOGIN")
             eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
             eventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
-            eventFrame:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED")
-            eventFrame:RegisterEvent("UPDATE_INSTANCE_INFO")
-            eventFrame:RegisterEvent("BOSS_KILL")
-            eventFrame:RegisterEvent("MERCHANT_SHOW")
-            eventFrame:RegisterEvent("MERCHANT_CLOSED")
+            UpdateFeatureEventRegistrations()
         elseif loadedAddon == "Blizzard_TimeManager" or loadedAddon == "Blizzard_TimeManager_Mainline" then
-            InstallClockHook()
+            if db and db.showInstanceProgress then
+                InstallClockHook()
+            end
+        elseif loadedAddon == "Blizzard_MainMenuBarBagButtons" then
+            ApplyChildBagSetting()
+        elseif loadedAddon == "Blizzard_ActionBar" then
+            if HasCustomStatusBarWidths() then
+                InstallStatusBarHooks()
+                ApplyStatusBarWidths()
+            end
+            if HasHiddenStatusBars() then
+                InstallStatusBarVisibilityHook()
+                ApplyStatusBarVisibility()
+            end
+            ApplyActionBarHotkeySetting()
+        elseif loadedAddon == "Blizzard_MicroMenu" then
+            ApplyMicroMenuSetting()
+        elseif loadedAddon == "Blizzard_Minimap" then
+            if db and db.replaceMinimapBorder then
+                InstallMinimapBorderHook()
+                ApplyMinimapBorderSetting()
+            end
         end
     elseif event == "PLAYER_LOGIN" then
         FinishInitialization()
     elseif event == "PLAYER_ENTERING_WORLD" then
         ApplyMicroMenuSetting()
-        QueueStatusBarWidthUpdate()
+        if HasCustomStatusBarWidths() then
+            InstallStatusBarHooks()
+            QueueStatusBarWidthUpdate()
+        end
+        if HasHiddenStatusBars() then
+            InstallStatusBarVisibilityHook()
+            ApplyStatusBarVisibility()
+        end
+        if db.replaceMinimapBorder then
+            InstallMinimapBorderHook()
+            QueueMinimapBorderUpdate()
+        end
+        ApplyChildBagSetting()
+        ApplyActionBarHotkeySetting()
         if db.showInstanceProgress then
             RefreshSavedInstances()
         end
     elseif event == "PLAYER_REGEN_ENABLED" then
+        if microMenuUpdatePending then
+            ApplyMicroMenuSetting()
+        end
         if barResizePending then
             barResizePending = false
             QueueStatusBarWidthUpdate()
         end
+        if bagBarUpdatePending then
+            ApplyChildBagSetting()
+        end
+        if actionBarHotkeyUpdatePending then
+            ApplyActionBarHotkeySetting()
+        end
     elseif event == "EDIT_MODE_LAYOUTS_UPDATED" then
-        QueueStatusBarWidthUpdate()
+        ApplyMicroMenuSetting()
+        if HasCustomStatusBarWidths() then
+            QueueStatusBarWidthUpdate()
+        end
+        if db.replaceMinimapBorder then
+            QueueMinimapBorderUpdate()
+        end
+        ApplyChildBagSetting()
+    elseif event == "DISPLAY_SIZE_CHANGED" or event == "UI_SCALE_CHANGED" then
+        if db.replaceMinimapBorder then
+            QueueMinimapBorderUpdate()
+        end
     elseif event == "UPDATE_INSTANCE_INFO" then
         if db.showInstanceProgress then
             RebuildInstanceCache()
