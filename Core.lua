@@ -705,11 +705,11 @@ local function InstallMinimapBorderHook()
 end
 
 local function SaveMinimapPosition()
-    if not db or not MinimapCluster then
+    if not db or not Minimap then
         return
     end
 
-    local point, relativeTo, relativePoint, xOfs, yOfs = MinimapCluster:GetPoint(1)
+    local point, relativeTo, relativePoint, xOfs, yOfs = Minimap:GetPoint(1)
     if not point then
         return
     end
@@ -725,16 +725,16 @@ end
 
 local function ApplyMinimapPosition()
     local position = db and db.minimapPosition
-    if not position or not position.point or not MinimapCluster then
+    if not position or not position.point or not Minimap then
         return
     end
 
-    local relativeTo = position.relativeTo and _G[position.relativeTo] or UIParent
-    MinimapCluster:ClearAllPoints()
-    MinimapCluster:SetPoint(
+    local relativeTo = position.relativeTo and _G[position.relativeTo] or Minimap:GetParent()
+    Minimap:ClearAllPoints()
+    Minimap:SetPoint(
         position.point,
         relativeTo,
-        position.relativePoint or "TOPRIGHT",
+        position.relativePoint or "CENTER",
         position.x or 0,
         position.y or 0
     )
@@ -742,12 +742,12 @@ local function ApplyMinimapPosition()
 end
 
 local function RestoreDefaultMinimapPosition()
-    if not MinimapCluster then
+    if not Minimap then
         return
     end
 
-    MinimapCluster:ClearAllPoints()
-    MinimapCluster:SetPoint("TOPRIGHT")
+    Minimap:ClearAllPoints()
+    Minimap:SetPoint("CENTER")
     minimapPositionApplied = false
 end
 
@@ -756,23 +756,23 @@ local function StopMinimapDrag()
         minimapDragTicker:Cancel()
         minimapDragTicker = nil
     end
-    if MinimapCluster then
-        MinimapCluster:StopMovingOrSizing()
+    if Minimap then
+        Minimap:StopMovingOrSizing()
     end
 end
 
 local function InstallMinimapDrag()
-    if minimapDragInstalled or not Minimap or not MinimapCluster then
+    if minimapDragInstalled or not Minimap then
         return
     end
 
     Minimap:SetMovable(true)
+    Minimap:SetClampedToScreen(true)
     Minimap:RegisterForDrag("LeftButton")
 
     Minimap:HookScript("OnDragStart", function()
         if db and db.moveableMinimap and not db.minimapPositionLocked then
-            MinimapCluster:SetMovable(true)
-            MinimapCluster:StartMoving()
+            Minimap:StartMoving()
             if not minimapDragTicker then
                 minimapDragTicker = C_Timer.NewTicker(0.1, function()
                     if not IsMouseButtonDown("LeftButton") then
@@ -797,7 +797,7 @@ local function InstallMinimapDrag()
 end
 
 local function ApplyMinimapMoveSetting()
-    if not db or not MinimapCluster then
+    if not db or not Minimap then
         return
     end
 
