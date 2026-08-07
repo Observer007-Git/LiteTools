@@ -16,6 +16,8 @@ local DEFAULTS = {
     fixedMicroMenu = false,
     showInstanceProgress = false,
     replaceMinimapBorder = false,
+    moveableMinimap = false,
+    minimapPositionLocked = false,
     autoSellJunk = false,
     hideChildBags = false,
     customActionBarHotkeyAliases = false,
@@ -44,6 +46,9 @@ local minimapBorderUpdateQueued = false
 local minimapBorderTexture
 local minimapDefaultBorderWasShown
 local minimapBorderApplied = false
+local minimapDragInstalled = false
+local minimapPositionApplied = false
+local minimapPositionUpdatePending = false
 local bagBarHooksInstalled = false
 local bagBarOriginalHideExpandToggle
 local bagBarSettingApplied = false
@@ -112,6 +117,11 @@ local function InitializeDatabase()
     db.fixedMicroMenu = not not db.fixedMicroMenu
     db.showInstanceProgress = not not db.showInstanceProgress
     db.replaceMinimapBorder = not not db.replaceMinimapBorder
+    db.moveableMinimap = not not db.moveableMinimap
+    db.minimapPositionLocked = not not db.minimapPositionLocked
+    if db.minimapPosition ~= nil and type(db.minimapPosition) ~= "table" then
+        db.minimapPosition = nil
+    end
     db.minimapBorderColorR = Clamp(tonumber(db.minimapBorderColorR) or 1, 0, 1)
     db.minimapBorderColorG = Clamp(tonumber(db.minimapBorderColorG) or 1, 0, 1)
     db.minimapBorderColorB = Clamp(tonumber(db.minimapBorderColorB) or 1, 0, 1)
@@ -519,15 +529,38 @@ local function ApplyHotkeyAliasToButton(button)
     end
 end
 
-local function InstallActionBarHotkeyHook()
-    if actionBarHotkeyHookInstalled
-        or not ActionBarActionButtonMixin
-        or not ActionBarActionButtonMixin.UpdateHotkeys
+local function HookActionBarButtonHotkeys(button)
+    if not button
+        or not button.UpdateHotkeys
+        or button.fansWowHotkeyHooked
     then
         return
     end
 
-    hooksecurefunc(ActionBarActionButtonMixin, "UpdateHotkeys", ApplyHotkeyAliasToButton)
+    hooksecurefunc(button, "UpdateHotkeys", ApplyHotkeyAliasToButton)
+    button.fansWowHotkeyHooked = true
+end
+
+local function InstallActionBarHotkeyHook()
+    if actionBarHotkeyHookInstalled then
+        return
+    end
+
+    if ActionBarActionButtonMixin and ActionBarActionButtonMixin.UpdateHotkeys then
+        hooksecurefunc(ActionBarActionButtonMixin, "UpdateHotkeys", ApplyHotkeyAliasToButton)
+    end
+
+    -- Mainline action buttons inherit UpdateHotkeys through mixin copies created
+    -- at frame creation (ActionBarButtonMixin / ActionBarActionButtonDerivedMixin),
+    -- so hooking the shared mixin above alone never fires for them. Hook each real
+    -- button instead, and hook RegisterFrame so buttons created later are covered.
+    ActionBarButtonEventsFrame:ForEachFrame(HookActionBarButtonHotkeys)
+    hooksecurefunc(ActionBarButtonEventsFrame, "RegisterFrame", function(_, button)
+        if db and db.customActionBarHotkeyAliases then
+            HookActionBarButtonHotkeys(button)
+        end
+    end)
+
     actionBarHotkeyHookInstalled = true
 end
 
@@ -668,6 +701,101 @@ local function InstallMinimapBorderHook()
     end
 
     minimapBorderHookInstalled = true
+end
+
+local function SaveMinimapPosition()
+    if not db or not Minimap then
+        return
+    end
+
+    local point, relativeTo, relativePoint, xOfs, yOfs = Minimap:GetPoint(1)
+    if not point then
+        return
+    end
+
+    db.minimapPosition = {
+        point = point,
+        relativeTo = relativeTo and relativeTo:GetName() or nil,
+        relativePoint = relativePoint,
+        x = xOfs or 0,
+        y = yOfs or 0,
+    }
+end
+
+local function ApplyMinimapPosition()
+    local position = db and db.minimapPosition
+    if not position or not position.point or not Minimap then
+        return
+    end
+
+    local relativeTo = position.relativeTo and _G[position.relativeTo] or Minimap:GetParent()
+    Minimap:ClearAllPoints()
+    Minimap:SetPoint(
+        position.point,
+        relativeTo,
+        position.relativePoint or "CENTER",
+        position.x or 0,
+        position.y or 0
+    )
+    minimapPositionApplied = true
+end
+
+local function RestoreDefaultMinimapPosition()
+    if not Minimap then
+        return
+    end
+
+    Minimap:ClearAllPoints()
+    Minimap:SetPoint("CENTER")
+    minimapPositionApplied = false
+end
+
+local function InstallMinimapDrag()
+    if minimapDragInstalled or not Minimap then
+        return
+    end
+
+    Minimap:SetMovable(true)
+    Minimap:SetClampedToScreen(true)
+    Minimap:RegisterForDrag("LeftButton")
+
+    Minimap:HookScript("OnDragStart", function(self)
+        if db and db.moveableMinimap and not db.minimapPositionLocked then
+            self:StartMoving()
+        end
+    end)
+
+    Minimap:HookScript("OnDragStop", function(self)
+        if self:IsMoving() then
+            self:StopMovingOrSizing()
+            if db and db.moveableMinimap then
+                SaveMinimapPosition()
+            end
+        end
+    end)
+
+    minimapDragInstalled = true
+end
+
+local function ApplyMinimapMoveSetting()
+    if not db or not Minimap then
+        return
+    end
+
+    if InCombatLockdown() then
+        minimapPositionUpdatePending = true
+        return
+    end
+
+    minimapPositionUpdatePending = false
+    if db.moveableMinimap then
+        InstallMinimapDrag()
+        if db.minimapPosition and not minimapPositionApplied then
+            ApplyMinimapPosition()
+        end
+    elseif minimapPositionApplied then
+        RestoreDefaultMinimapPosition()
+    end
 end
 
 local function FillDeleteConfirmation()
@@ -918,6 +1046,13 @@ function Addon:SetSetting(key, value)
             InstallMinimapBorderHook()
         end
         QueueMinimapBorderUpdate()
+    elseif key == "moveableMinimap" then
+        ApplyMinimapMoveSetting()
+    elseif key == "minimapPositionLocked" then
+        if value then
+            SaveMinimapPosition()
+        end
+        ApplyMinimapMoveSetting()
     elseif key == "hideChildBags" then
         ApplyChildBagSetting()
     elseif key == "customActionBarHotkeyAliases" then
@@ -1011,6 +1146,7 @@ local function FinishInitialization()
         ApplyMinimapBorderSetting()
     end
 
+    ApplyMinimapMoveSetting()
     ApplyMicroMenuSetting()
     ApplyChildBagSetting()
     ApplyActionBarHotkeySetting()
@@ -1053,6 +1189,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
                 InstallMinimapBorderHook()
                 ApplyMinimapBorderSetting()
             end
+            ApplyMinimapMoveSetting()
         end
     elseif event == "PLAYER_LOGIN" then
         FinishInitialization()
@@ -1070,6 +1207,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
             InstallMinimapBorderHook()
             QueueMinimapBorderUpdate()
         end
+        ApplyMinimapMoveSetting()
         ApplyChildBagSetting()
         ApplyActionBarHotkeySetting()
         if db.showInstanceProgress then
@@ -1089,6 +1227,9 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if actionBarHotkeyUpdatePending then
             ApplyActionBarHotkeySetting()
         end
+        if minimapPositionUpdatePending then
+            ApplyMinimapMoveSetting()
+        end
     elseif event == "EDIT_MODE_LAYOUTS_UPDATED" then
         ApplyMicroMenuSetting()
         if HasCustomStatusBarWidths() then
@@ -1097,6 +1238,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         if db.replaceMinimapBorder then
             QueueMinimapBorderUpdate()
         end
+        ApplyMinimapMoveSetting()
         ApplyChildBagSetting()
     elseif event == "DISPLAY_SIZE_CHANGED" or event == "UI_SCALE_CHANGED" then
         if db.replaceMinimapBorder then

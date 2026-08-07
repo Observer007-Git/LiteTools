@@ -11,9 +11,9 @@ local function SetControlLabel(control, text)
     return label
 end
 
-local function CreateCheckButton(panel, name, label, settingKey, y)
+local function CreateCheckButton(panel, name, label, settingKey, y, x)
     local button = CreateFrame("CheckButton", name, panel, "UICheckButtonTemplate")
-    button:SetPoint("TOPLEFT", 20, y)
+    button:SetPoint("TOPLEFT", x or 20, y)
     button:SetSize(26, 26)
     local labelRegion = SetControlLabel(button, label)
     if labelRegion then
@@ -200,15 +200,24 @@ local function CreateSettingsPanel()
         "replaceMinimapBorder",
         -406
     )
-    CreateMinimapBorderColorButton(panel, -442)
-    CreateCheckButton(panel, "FansWowToolsAutoSellJunkCheck", "自动售卖垃圾", "autoSellJunk", -478)
-    CreateCheckButton(panel, "FansWowToolsHideChildBagsCheck", "隐藏子背包", "hideChildBags", -514)
+    CreateCheckButton(panel, "FansWowToolsMinimapMoveCheck", "小地图可移动", "moveableMinimap", -442)
+    CreateCheckButton(
+        panel,
+        "FansWowToolsMinimapLockCheck",
+        "锁定位置",
+        "minimapPositionLocked",
+        -442,
+        160
+    )
+    CreateMinimapBorderColorButton(panel, -478)
+    CreateCheckButton(panel, "FansWowToolsAutoSellJunkCheck", "自动售卖垃圾", "autoSellJunk", -514)
+    CreateCheckButton(panel, "FansWowToolsHideChildBagsCheck", "隐藏子背包", "hideChildBags", -550)
     CreateCheckButton(
         panel,
         "FansWowToolsActionBarHotkeyAliasesCheck",
         "自定义动作条快捷键显示别名（只支持原生动作条）",
         "customActionBarHotkeyAliases",
-        -550
+        -586
     )
 
     panel:SetScript("OnShow", RefreshControls)
