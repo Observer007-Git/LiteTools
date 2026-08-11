@@ -9,32 +9,43 @@ local CHOICES = {
 }
 
 local BACKGROUND_TEXTURE =
-    "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\Splash-hollow-ring"
-local DEFAULT_PREVIEW_ATLAS = "tokens-changeName-large"
-local PREVIEW_MASK_TEXTURE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+    "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\loot-background"
+local PREVIEW_TEXTURE =
+    "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\wantall"
 local PANEL_HEIGHT = 96
-local LEFT_BACKGROUND_WIDTH = 96
-local PREVIEW_SIZE = 40
+local LEFT_BACKGROUND_WIDTH = 82
+local PREVIEW_WIDTH = 67
+local PREVIEW_HEIGHT = 66
+local PREVIEW_CENTER_X = 50
+local PREVIEW_CENTER_Y = 45
+
+-- Manual button layout: increase horizontal padding to move right;
+-- increase top padding to move down; spacing controls the gaps between buttons.
 local BUTTON_SIZE = 48
-local BUTTON_SPACING = 7.5
-local TARGET_HORIZONTAL_PADDING = 15
-local BUTTON_VISUAL_COMPENSATION = 19.5
-local NEED_VERTICAL_OFFSET = 1
-local BUTTON_LEFT_PADDING = TARGET_HORIZONTAL_PADDING - BUTTON_VISUAL_COMPENSATION
-local BUTTON_RIGHT_PADDING = TARGET_HORIZONTAL_PADDING + BUTTON_VISUAL_COMPENSATION
-local BUTTON_VERTICAL_PADDING = (PANEL_HEIGHT - BUTTON_SIZE) / 2
+local BUTTON_SPACING = 10
+local BUTTON_HORIZONTAL_PADDING = 30
+local BUTTON_TOP = 20
+local BUTTON_OFFSETS = {
+    [1] = { x = -8, y = -2 }, -- Need
+    [2] = { x = 2, y = 1 }, -- Greed
+    [3] = { x = 8, y = 0 }, -- Disenchant
+    [4] = { x = 8, y = 0 }, -- Transmog
+    [5] = { x = 8, y = 1 }, -- Pass
+}
+local BUTTON_EXPANSIONS = {
+    [1] = 1, -- Need: expand 1px on every side
+    [2] = 1, -- Greed: expand 1px on every side
+}
 local BUTTONS_WIDTH = #CHOICES * BUTTON_SIZE + (#CHOICES - 1) * BUTTON_SPACING
-local PANEL_WIDTH = LEFT_BACKGROUND_WIDTH
-    + BUTTON_LEFT_PADDING
-    + BUTTONS_WIDTH
-    + BUTTON_RIGHT_PADDING
-local RIGHT_BACKGROUND_WIDTH = PANEL_WIDTH - LEFT_BACKGROUND_WIDTH
+local RIGHT_BACKGROUND_WIDTH = 365
+local PANEL_WIDTH = LEFT_BACKGROUND_WIDTH + RIGHT_BACKGROUND_WIDTH
 local BACKGROUND_TEXTURE_WIDTH = 512
 local BACKGROUND_TEXTURE_HEIGHT = 128
-local BACKGROUND_VISIBLE_RIGHT = 358 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_VISIBLE_TOP = 14 / BACKGROUND_TEXTURE_HEIGHT
-local BACKGROUND_VISIBLE_BOTTOM = 118 / BACKGROUND_TEXTURE_HEIGHT
-local BACKGROUND_SPLIT = 104 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_VISIBLE_LEFT = 5 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_SPLIT = 82 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_VISIBLE_RIGHT = 362 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_VISIBLE_TOP = 25 / BACKGROUND_TEXTURE_HEIGHT
+local BACKGROUND_VISIBLE_BOTTOM = 115 / BACKGROUND_TEXTURE_HEIGHT
 for _, choice in ipairs(CHOICES) do
     choice.normalAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-up"
     choice.pushedAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-down"
@@ -310,7 +321,7 @@ local function EnsurePanel()
     leftBackground:SetPoint("TOPLEFT")
     leftBackground:SetTexture(BACKGROUND_TEXTURE)
     leftBackground:SetTexCoord(
-        0,
+        BACKGROUND_VISIBLE_LEFT,
         BACKGROUND_SPLIT,
         BACKGROUND_VISIBLE_TOP,
         BACKGROUND_VISIBLE_BOTTOM
@@ -330,43 +341,36 @@ local function EnsurePanel()
     panel.rightBackground = rightBackground
 
     local panelIcon = panel:CreateTexture(nil, "BACKGROUND", nil, -1)
-    panelIcon:SetSize(PREVIEW_SIZE, PREVIEW_SIZE)
-    panelIcon:SetPoint("CENTER", leftBackground, "CENTER", 0, 0)
-    panelIcon:SetAtlas(DEFAULT_PREVIEW_ATLAS, false)
+    panelIcon:SetSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    panelIcon:SetPoint(
+        "CENTER",
+        leftBackground,
+        "TOPLEFT",
+        PREVIEW_CENTER_X,
+        -PREVIEW_CENTER_Y
+    )
+    panelIcon:SetTexture(PREVIEW_TEXTURE)
+    panelIcon:SetTexCoord(0, 1, 0, 1)
     panel.icon = panelIcon
 
-    local panelIconMask = panel:CreateMaskTexture()
-    panelIconMask:SetAllPoints(panelIcon)
-    panelIconMask:SetTexture(
-        PREVIEW_MASK_TEXTURE,
-        "CLAMPTOBLACKADDITIVE",
-        "CLAMPTOBLACKADDITIVE"
-    )
-    panelIcon:AddMaskTexture(panelIconMask)
-    panel.iconMask = panelIconMask
-
-    local previousButton
     panel.buttons = {}
     for index, choice in ipairs(CHOICES) do
         local button = CreateFrame("Button", "LiteToolsAutoRollButton" .. index, panel)
-        button:SetSize(BUTTON_SIZE, BUTTON_SIZE)
-        if previousButton then
-            button:SetPoint(
-                "LEFT",
-                previousButton,
-                "RIGHT",
-                BUTTON_SPACING,
-                index == 2 and NEED_VERTICAL_OFFSET or 0
-            )
-        else
-            button:SetPoint(
-                "TOPLEFT",
-                panel,
-                "TOPLEFT",
-                LEFT_BACKGROUND_WIDTH + BUTTON_LEFT_PADDING,
-                -BUTTON_VERTICAL_PADDING - NEED_VERTICAL_OFFSET
-            )
-        end
+        local expansion = BUTTON_EXPANSIONS[index] or 0
+        button:SetSize(BUTTON_SIZE + expansion * 2, BUTTON_SIZE + expansion * 2)
+        local offset = BUTTON_OFFSETS[index]
+        local buttonX = LEFT_BACKGROUND_WIDTH
+            + BUTTON_HORIZONTAL_PADDING
+            + (index - 1) * (BUTTON_SIZE + BUTTON_SPACING)
+            + offset.x
+            - expansion
+        button:SetPoint(
+            "TOPLEFT",
+            panel,
+            "TOPLEFT",
+            buttonX,
+            -BUTTON_TOP + offset.y + expansion
+        )
         button:SetNormalAtlas(choice.normalAtlas, false)
         button:SetPushedAtlas(choice.pushedAtlas, false)
         button:SetHighlightAtlas(choice.highlightAtlas, "ADD")
@@ -390,7 +394,6 @@ local function EnsurePanel()
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             if self:IsEnabled() then
                 self.selectionGlow:Show()
-                panelIcon:SetAtlas(choice.normalAtlas, false)
             end
             if startingPriority == #CHOICES then
                 GameTooltip:SetText(Addon.L.PASS_ALL_LOOT)
@@ -405,10 +408,8 @@ local function EnsurePanel()
         end)
         button:SetScript("OnLeave", function(self)
             self.selectionGlow:Hide()
-            panelIcon:SetAtlas(DEFAULT_PREVIEW_ATLAS, false)
             GameTooltip:Hide()
         end)
-        previousButton = button
         panel.buttons[index] = button
     end
     panel:Hide()

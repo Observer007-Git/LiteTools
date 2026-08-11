@@ -17,6 +17,7 @@ Modules/Minimap.lua
 Modules/Bags.lua
 Modules/ActionBars.lua
 Modules/Alerts.lua
+Modules/CombatAlert.lua
 Modules/AutoRoll.lua
 Modules/Convenience.lua
 Modules/InstanceProgress.lua
