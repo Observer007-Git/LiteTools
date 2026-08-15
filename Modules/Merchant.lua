@@ -20,8 +20,24 @@ local function TryAutoRepair()
     end
 
     local repairCost, canRepair = GetRepairAllCost()
-    if canRepair and repairCost and repairCost > 0 then
-        RepairAllItems(CanGuildBankRepair())
+    if not canRepair or not repairCost or repairCost <= 0 then return end
+
+    if CanGuildBankRepair() then
+        RepairAllItems(true)
+        C_Timer.After(0, function()
+            local db = DB()
+            if not db or not db.autoRepair or not MerchantFrame
+                or not MerchantFrame:IsShown() or not CanMerchantRepair()
+            then
+                return
+            end
+            local remainingCost, canFinish = GetRepairAllCost()
+            if canFinish and remainingCost and remainingCost > 0 then
+                RepairAllItems(false)
+            end
+        end)
+    else
+        RepairAllItems(false)
     end
 end
 

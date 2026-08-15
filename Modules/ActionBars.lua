@@ -57,7 +57,9 @@ local function ApplyAlias(button)
     if not key and buttonName then
         key = GetBindingKey("CLICK " .. buttonName .. ":LeftButton")
     end
-    if not key or IsBindingForGamePad(key) then
+    if not key
+        or (type(IsBindingForGamePad) == "function" and IsBindingForGamePad(key))
+    then
         return
     end
     local alias = GetAlias(key)
@@ -120,8 +122,8 @@ local function ApplySetting()
 end
 
 Addon:RegisterSetting("customActionBarHotkeyAliases", false, Addon.BooleanSetting, ApplySetting)
-Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting)
+Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting, IsEnabled)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting, IsEnabled)
 Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if updatePending then
         ApplySetting()
@@ -131,5 +133,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_ActionBar" then
         ApplySetting()
     end
-end)
-
+end, IsEnabled)

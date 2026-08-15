@@ -11,9 +11,16 @@ function Anchors:SavePosition(anchor, settingKey)
 
     local centerX, centerY = anchor:GetCenter()
     local uiWidth, uiHeight = UIParent:GetSize()
-    if not centerX or not centerY or not uiWidth or not uiHeight or uiWidth <= 0 or uiHeight <= 0 then
+    local anchorScale = anchor:GetEffectiveScale()
+    local uiScale = UIParent:GetEffectiveScale()
+    if not centerX or not centerY or not uiWidth or not uiHeight
+        or not anchorScale or not uiScale or uiWidth <= 0 or uiHeight <= 0
+        or anchorScale <= 0 or uiScale <= 0 then
         return
     end
+
+    centerX = centerX * anchorScale / uiScale
+    centerY = centerY * anchorScale / uiScale
 
     database[settingKey] = {
         version = 2,
@@ -30,17 +37,22 @@ function Anchors:Position(anchor, settingKey, defaultX, defaultY)
 
     local position = database[settingKey]
     local uiWidth, uiHeight = UIParent:GetSize()
-    if not uiWidth or not uiHeight or uiWidth <= 0 or uiHeight <= 0 then
+    local anchorScale = anchor:GetEffectiveScale()
+    local uiScale = UIParent:GetEffectiveScale()
+    if not uiWidth or not uiHeight or not anchorScale or not uiScale
+        or uiWidth <= 0 or uiHeight <= 0 or anchorScale <= 0 or uiScale <= 0 then
         return
     end
+
+    local pointScale = uiScale / anchorScale
 
     anchor:ClearAllPoints()
     anchor:SetPoint(
         "CENTER",
         UIParent,
         "BOTTOMLEFT",
-        (position and position.x or defaultX) * uiWidth,
-        (position and position.y or defaultY) * uiHeight
+        (position and position.x or defaultX) * uiWidth * pointScale,
+        (position and position.y or defaultY) * uiHeight * pointScale
     )
 end
 
@@ -50,6 +62,9 @@ function Anchors:Create(options)
     anchor:SetFrameStrata("DIALOG")
     anchor:SetMovable(true)
     anchor:SetClampedToScreen(true)
+    if anchor.SetDontSavePosition then
+        anchor:SetDontSavePosition(true)
+    end
     anchor:EnableMouse(true)
     anchor:RegisterForDrag("LeftButton")
 
@@ -83,4 +98,3 @@ function Anchors:Create(options)
     anchor:Hide()
     return anchor
 end
-

@@ -11,6 +11,7 @@ local settings = {}
 local settingCallbacks = {}
 local eventHandlers = {}
 local databaseMigrations = {}
+local registeredEvents = {}
 
 local function Clamp(value, minimum, maximum)
     value = tonumber(value) or minimum
@@ -47,9 +48,12 @@ function Addon.BooleanSetting(value)
     return SanitizeBoolean(value)
 end
 
-function Addon.NumberSetting(minimum, maximum)
+function Addon.NumberSetting(minimum, maximum, step)
+    step = tonumber(step) or 1
     return function(value)
-        return math.floor(Clamp(value, minimum, maximum) + 0.5)
+        value = Clamp(value, minimum, maximum)
+        value = minimum + math.floor((value - minimum) / step + 0.5) * step
+        return math.floor(value * 1000000 + 0.5) / 1000000
     end
 end
 
@@ -70,11 +74,15 @@ function Addon:RegisterSetting(key, defaultValue, sanitizer, callback)
 end
 
 function Addon:RegisterSettingCallback(key, callback)
+    assert(settings[key] ~= nil, "Unknown LiteTools setting: " .. tostring(key))
+    assert(type(callback) == "function",
+        "Invalid LiteTools setting callback: " .. tostring(key))
     settingCallbacks[key] = settingCallbacks[key] or {}
     settingCallbacks[key][#settingCallbacks[key] + 1] = callback
 end
 
 function Addon:RegisterDatabaseMigration(callback)
+    assert(type(callback) == "function", "Invalid LiteTools database migration")
     databaseMigrations[#databaseMigrations + 1] = callback
 end
 
@@ -95,32 +103,22 @@ local function ShouldHandleEvent(handler)
 end
 
 function Addon:RegisterEvent(event, callback, predicate)
+    assert(type(event) == "string" and type(callback) == "function",
+        "Invalid LiteTools event registration: " .. tostring(event))
+    assert(predicate == nil or type(predicate) == "function",
+        "Invalid LiteTools event predicate: " .. tostring(event))
     eventHandlers[event] = eventHandlers[event] or {}
     eventHandlers[event][#eventHandlers[event] + 1] = {
         callback = callback,
         predicate = predicate,
     }
-end
-
-function Addon:RefreshEventRegistrations()
-    if not initialized then
-        return
-    end
-
-    for event, handlers in pairs(eventHandlers) do
-        local enabled = false
-        for _, handler in ipairs(handlers) do
-            if ShouldHandleEvent(handler) then
-                enabled = true
-                break
-            end
-        end
-
-        if enabled then
-            eventFrame:RegisterEvent(event)
-        else
-            eventFrame:UnregisterEvent(event)
-        end
+    -- Retail may reject event registration from a settings click call stack.
+    -- Register routes while addon files load, then gate dispatch with predicates.
+    if not registeredEvents[event] then
+        assert(not initialized,
+            "LiteTools events must be registered during addon loading: " .. event)
+        eventFrame:RegisterEvent(event)
+        registeredEvents[event] = true
     end
 end
 
@@ -138,7 +136,6 @@ function Addon:SetSetting(key, value)
     end
 
     database[key] = value
-    self:RefreshEventRegistrations()
     for _, callback in ipairs(settingCallbacks[key] or {}) do
         callback(value, key)
     end
@@ -180,11 +177,11 @@ local function DispatchEvent(event, ...)
 end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
+registeredEvents.ADDON_LOADED = true
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" and ... == ADDON_NAME and not initialized then
         InitializeDatabase()
         initialized = true
-        Addon:RefreshEventRegistrations()
     end
 
     if initialized then

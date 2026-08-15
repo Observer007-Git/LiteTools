@@ -1,10 +1,10 @@
-## Interface: 120007, 120001, 120000
+## Interface: 120100
 ## Title: LiteTools
 ## Title-zhCN: LiteTools
 ## Notes: A lightweight collection of quality-of-life tools.
 ## Notes-zhCN: 一组轻量、可独立设置的魔兽世界便捷工具。
 ## Author: Fan
-## Version: 2.0.11
+## Version: 2.7.0
 ## SavedVariables: LiteToolsDB, FansWowToolsDB
 
 Core/Core.lua
@@ -17,9 +17,10 @@ Modules/Minimap.lua
 Modules/Bags.lua
 Modules/ActionBars.lua
 Modules/Alerts.lua
-Modules/CombatAlert.lua
 Modules/AutoRoll.lua
+Modules/CombatAlert.lua
 Modules/Convenience.lua
 Modules/InstanceProgress.lua
 Modules/Merchant.lua
 UI/Settings.lua
+UI/SettingsWindow.lua

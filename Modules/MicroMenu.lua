@@ -70,8 +70,8 @@ local function ApplySetting()
 end
 
 Addon:RegisterSetting("fixedMicroMenu", false, Addon.BooleanSetting, ApplySetting)
-Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting)
+Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting, IsEnabled)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting, IsEnabled)
 Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if updatePending then
         ApplySetting()
@@ -82,5 +82,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_MicroMenu" then
         ApplySetting()
     end
-end)
-
+end, IsEnabled)

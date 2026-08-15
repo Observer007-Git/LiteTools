@@ -5,6 +5,10 @@ local DEFAULT_SCALE = 100
 local FADE_DURATION = 0.5
 local ALERT_HEIGHT = 96
 local FALLBACK_ALERT_WIDTH = 420
+local COMBAT_TIMER_HEIGHT = 64
+local COMBAT_TIMER_FALLBACK_WIDTH = 360
+local COMBAT_TIMER_UPDATE_INTERVAL = 0.25
+local COMBAT_TIMER_FONT_SCALE = 1.2
 
 local ALERT_DEFINITIONS = {
     {
@@ -12,8 +16,6 @@ local ALERT_DEFINITIONS = {
         enabledKey = "showCombatAlert",
         durationKey = "combatAlertDuration",
         scaleKey = "combatAlertScale",
-        mutedKey = "combatAlertMuted",
-        soundKey = "combatAlertSound",
         positionKey = "combatAlertPosition",
         hiddenKey = "combatAlertAnchorHidden",
         frameName = "LiteToolsCombatAlertFrame",
@@ -31,8 +33,6 @@ local ALERT_DEFINITIONS = {
         enabledKey = "showLeaveCombatAlert",
         durationKey = "leaveCombatAlertDuration",
         scaleKey = "leaveCombatAlertScale",
-        mutedKey = "leaveCombatAlertMuted",
-        soundKey = "leaveCombatAlertSound",
         positionKey = "leaveCombatAlertPosition",
         hiddenKey = "leaveCombatAlertAnchorHidden",
         frameName = "LiteToolsLeaveCombatAlertFrame",
@@ -51,28 +51,6 @@ local ALERT_DEFINITIONS = {
 
 local function DB()
     return Addon:GetDatabase()
-end
-
-local function SanitizeSound(value)
-    if type(value) ~= "string" and type(value) ~= "number" then
-        return ""
-    end
-    return tostring(value):match("^%s*(.-)%s*$"):sub(1, 255)
-end
-
-local function PlaySoundValue(value)
-    if value == nil or value == "" or type(PlaySoundFile) ~= "function" then return end
-
-    local soundFile = value
-    local soundFileID = tonumber(soundFile)
-    if soundFileID and soundFileID > 0 and soundFileID == math.floor(soundFileID) then
-        soundFile = soundFileID
-    end
-    pcall(PlaySoundFile, soundFile, "Master")
-end
-
-function Addon:PreviewCombatAlertSound(value)
-    PlaySoundValue(value)
 end
 
 local function CancelFadeTimer(definition)
@@ -213,12 +191,6 @@ local function EnsureAnchor(definition)
     return definition.anchor
 end
 
-local function PlayConfiguredSound(definition)
-    local db = DB()
-    if not db or db[definition.mutedKey] then return end
-    PlaySoundValue(db[definition.soundKey])
-end
-
 local function ShowAlert(definition)
     local db = DB()
     if not db or not db[definition.enabledKey] then return end
@@ -228,7 +200,6 @@ local function ShowAlert(definition)
     UpdateBackground(definition)
     PositionAlert(definition)
     frame:Show()
-    PlayConfiguredSound(definition)
     ScheduleFade(definition, db[definition.durationKey])
 end
 
@@ -275,8 +246,6 @@ local function RegisterAlert(definition)
             if definition.frame then definition.frame:SetScale(value / 100) end
         end
     )
-    Addon:RegisterSetting(definition.mutedKey, false, Addon.BooleanSetting)
-    Addon:RegisterSetting(definition.soundKey, "", SanitizeSound)
     Addon:RegisterSetting(definition.positionKey, nil, Addon.PositionSetting)
     Addon:RegisterSetting(definition.hiddenKey, false, Addon.BooleanSetting)
 
@@ -299,6 +268,361 @@ local function RegisterAlert(definition)
     end
 end
 
+Addon:RegisterDatabaseMigration(function(db)
+    db.combatAlertMuted = nil
+    db.combatAlertSound = nil
+    db.leaveCombatAlertMuted = nil
+    db.leaveCombatAlertSound = nil
+end)
+
 for _, definition in ipairs(ALERT_DEFINITIONS) do
     RegisterAlert(definition)
+end
+
+local combatTimerFrame
+local combatTimerTicker
+local instanceStartTime
+local lastInstanceDuration = 0
+local instanceActive = false
+local instanceStateUpdateGeneration = 0
+local combatStartTime
+local lastCombatDuration = 0
+local combatActive = false
+
+local function FormatInstanceTime(elapsed)
+    elapsed = math.max(0, math.floor(elapsed or 0))
+    local hours = math.floor(elapsed / 3600)
+    local minutes = math.floor(elapsed / 60) % 60
+    local seconds = elapsed % 60
+    return string.format("%02d:%02d:%02d", hours, minutes, seconds)
+end
+
+local function FormatCombatTime(elapsed)
+    local hundredths = math.max(0, math.floor((elapsed or 0) * 100))
+    local minutes = math.floor(hundredths / 6000)
+    local seconds = math.floor(hundredths / 100) % 60
+    local fraction = hundredths % 100
+    return string.format("%02d:%02d.%02d", minutes, seconds, fraction)
+end
+
+local function UpdateCombatTimerText()
+    if not combatTimerFrame then return end
+
+    local now = GetTime()
+    local instanceElapsed = instanceActive and instanceStartTime
+        and (now - instanceStartTime)
+        or lastInstanceDuration
+    local combatElapsed = combatActive and combatStartTime
+        and (now - combatStartTime)
+        or lastCombatDuration
+    local instanceText = FormatInstanceTime(instanceElapsed)
+    local combatText = FormatCombatTime(combatElapsed)
+    if combatTimerFrame.lastInstanceText ~= instanceText then
+        combatTimerFrame.lastInstanceText = instanceText
+        combatTimerFrame.instanceText:SetText(instanceText)
+    end
+    if combatTimerFrame.lastCombatText ~= combatText then
+        combatTimerFrame.lastCombatText = combatText
+        combatTimerFrame.combatText:SetText(combatText)
+    end
+end
+
+local function GetCombatTimerAtlas()
+    return UnitFactionGroup("player") == "Horde"
+        and "HordeScenario-TitleBG"
+        or "AllianceScenario-TitleBG"
+end
+
+local function UpdateCombatTimerBackground()
+    if not combatTimerFrame then return end
+
+    local atlas = GetCombatTimerAtlas()
+    local width = COMBAT_TIMER_FALLBACK_WIDTH
+    if C_Texture and C_Texture.GetAtlasInfo then
+        local atlasInfo = C_Texture.GetAtlasInfo(atlas)
+        if atlasInfo and atlasInfo.width and atlasInfo.height and atlasInfo.height > 0 then
+            width = Addon:Clamp(
+                COMBAT_TIMER_HEIGHT * atlasInfo.width / atlasInfo.height,
+                300,
+                520
+            )
+        end
+    end
+    combatTimerFrame:SetSize(width, COMBAT_TIMER_HEIGHT)
+    combatTimerFrame.background:SetAtlas(atlas, false)
+end
+
+local function PositionCombatTimer()
+    if not combatTimerFrame then return end
+    Addon.Anchors:Position(
+        combatTimerFrame,
+        "combatTimerPosition",
+        0.5,
+        0.68
+    )
+end
+
+local function GetInstanceToken()
+    local inInstance, instanceType = IsInInstance()
+    local inDelve = C_PartyInfo
+        and C_PartyInfo.IsDelveInProgress
+        and C_PartyInfo.IsDelveInProgress()
+    if not inInstance and not inDelve then return nil end
+
+    if inInstance then
+        local instanceID = select(8, GetInstanceInfo())
+        return tostring(instanceType or "instance")
+            .. ":"
+            .. tostring(instanceID or "")
+    end
+    return "delve"
+end
+
+local function ResetInstanceTimer()
+    local instanceToken = GetInstanceToken()
+    lastInstanceDuration = 0
+    if instanceToken then
+        instanceStartTime = GetTime()
+        instanceActive = true
+    else
+        instanceStartTime = nil
+        instanceActive = false
+    end
+    UpdateCombatTimerText()
+end
+
+local function ResetCombatTimer()
+    lastCombatDuration = 0
+    if InCombatLockdown() then
+        combatStartTime = GetTime()
+        combatActive = true
+    else
+        combatStartTime = nil
+        combatActive = false
+    end
+    UpdateCombatTimerText()
+end
+
+local function ScaleCombatTimerFont(fontString)
+    local fontFile, fontHeight, fontFlags = fontString:GetFont()
+    if fontFile and fontHeight then
+        fontString:SetFont(
+            fontFile,
+            fontHeight * COMBAT_TIMER_FONT_SCALE,
+            fontFlags or ""
+        )
+    end
+end
+
+local function EnsureCombatTimerFrame()
+    if combatTimerFrame then return combatTimerFrame end
+
+    local frame = CreateFrame("Frame", "LiteToolsCombatTimerFrame", UIParent)
+    frame:SetFrameStrata("HIGH")
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+    if frame.SetDontSavePosition then
+        frame:SetDontSavePosition(true)
+    end
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+
+    local background = frame:CreateTexture(nil, "BACKGROUND")
+    background:SetAllPoints()
+    frame.background = background
+
+    local divider = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    divider:SetPoint("CENTER")
+    divider:SetJustifyH("CENTER")
+    divider:SetJustifyV("MIDDLE")
+    divider:SetTextColor(1, 0.82, 0, 1)
+    divider:SetText("|")
+    ScaleCombatTimerFont(divider)
+    frame.divider = divider
+
+    local instanceText = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
+    instanceText:SetPoint("RIGHT", divider, "LEFT", -8, 0)
+    instanceText:SetSize(112, COMBAT_TIMER_HEIGHT)
+    instanceText:SetJustifyH("RIGHT")
+    instanceText:SetJustifyV("MIDDLE")
+    instanceText:SetTextColor(1, 0.82, 0, 1)
+    ScaleCombatTimerFont(instanceText)
+    frame.instanceText = instanceText
+
+    local combatText = frame:CreateFontString(nil, "OVERLAY", "NumberFontNormalLarge")
+    combatText:SetPoint("LEFT", divider, "RIGHT", 8, 0)
+    combatText:SetSize(112, COMBAT_TIMER_HEIGHT)
+    combatText:SetJustifyH("LEFT")
+    combatText:SetJustifyV("MIDDLE")
+    combatText:SetTextColor(1, 0.82, 0, 1)
+    ScaleCombatTimerFont(combatText)
+    frame.combatText = combatText
+
+    frame:SetScript("OnDragStart", function(self)
+        if not InCombatLockdown() then
+            self:StartMoving()
+        end
+    end)
+    frame:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        Addon.Anchors:SavePosition(self, "combatTimerPosition")
+        PositionCombatTimer()
+    end)
+    frame:SetScript("OnMouseUp", function(self, button)
+        if button ~= "RightButton" then return end
+        ResetInstanceTimer()
+        ResetCombatTimer()
+    end)
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(Addon.L.COMBAT_TIMER_TOOLTIP)
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame:SetScript("OnHide", function(self) self:StopMovingOrSizing() end)
+
+    combatTimerFrame = frame
+    UpdateCombatTimerBackground()
+    frame:SetScale((Addon:GetSetting("combatTimerScale") or DEFAULT_SCALE) / 100)
+    PositionCombatTimer()
+    UpdateCombatTimerText()
+    frame:Hide()
+    return frame
+end
+
+local function StartCombatTimerUpdates()
+    if combatTimerTicker then return end
+    combatTimerTicker = C_Timer.NewTicker(
+        COMBAT_TIMER_UPDATE_INTERVAL,
+        UpdateCombatTimerText
+    )
+end
+
+local function StopCombatTimerUpdates()
+    if combatTimerTicker then
+        combatTimerTicker:Cancel()
+        combatTimerTicker = nil
+    end
+end
+
+local function UpdateCombatTimerRefreshMode()
+    if not combatTimerFrame then return end
+
+    if combatActive then
+        StopCombatTimerUpdates()
+        combatTimerFrame:SetScript("OnUpdate", UpdateCombatTimerText)
+    else
+        combatTimerFrame:SetScript("OnUpdate", nil)
+        StartCombatTimerUpdates()
+    end
+end
+
+local function UpdateInstanceTimerState()
+    local instanceToken = GetInstanceToken()
+    if instanceToken and not instanceActive then
+        instanceStartTime = GetTime()
+        lastInstanceDuration = 0
+        instanceActive = true
+    elseif not instanceToken and instanceActive then
+        if instanceActive and instanceStartTime then
+            lastInstanceDuration = math.max(0, GetTime() - instanceStartTime)
+        end
+        instanceStartTime = nil
+        instanceActive = false
+    end
+    UpdateCombatTimerText()
+end
+
+local function QueueInstanceTimerStateUpdate()
+    instanceStateUpdateGeneration = instanceStateUpdateGeneration + 1
+    local generation = instanceStateUpdateGeneration
+    C_Timer.After(0.75, function()
+        if generation == instanceStateUpdateGeneration
+            and Addon:GetSetting("showCombatTimer") then
+            UpdateInstanceTimerState()
+        end
+    end)
+end
+
+local function ApplyCombatTimer(reposition)
+    local db = DB()
+    if not db then return end
+
+    if db.showCombatTimer then
+        local frame = EnsureCombatTimerFrame()
+        UpdateCombatTimerBackground()
+        if reposition then PositionCombatTimer() end
+        frame:SetScale(db.combatTimerScale / 100)
+        UpdateCombatTimerText()
+        frame:Show()
+        UpdateCombatTimerRefreshMode()
+    else
+        if instanceActive and instanceStartTime then
+            lastInstanceDuration = math.max(0, GetTime() - instanceStartTime)
+        end
+        instanceStartTime = nil
+        instanceActive = false
+        StopCombatTimerUpdates()
+        if combatTimerFrame then
+            combatTimerFrame:SetScript("OnUpdate", nil)
+            combatTimerFrame:Hide()
+        end
+    end
+end
+
+local function IsCombatTimerEnabled(db)
+    return db.showCombatTimer
+end
+
+Addon:RegisterSetting("showCombatTimer", false, Addon.BooleanSetting, function()
+    ApplyCombatTimer(true)
+    if Addon:GetSetting("showCombatTimer") then
+        QueueInstanceTimerStateUpdate()
+    end
+end)
+Addon:RegisterSetting(
+    "combatTimerScale",
+    DEFAULT_SCALE,
+    Addon.NumberSetting(50, 200),
+    function(value)
+        if combatTimerFrame then combatTimerFrame:SetScale(value / 100) end
+    end
+)
+Addon:RegisterSetting("combatTimerPosition", nil, Addon.PositionSetting)
+
+Addon:RegisterEvent("PLAYER_REGEN_DISABLED", function()
+    combatStartTime = GetTime()
+    lastCombatDuration = 0
+    combatActive = true
+    UpdateCombatTimerText()
+    UpdateCombatTimerRefreshMode()
+end, IsCombatTimerEnabled)
+Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
+    if combatActive and combatStartTime then
+        lastCombatDuration = math.max(0, GetTime() - combatStartTime)
+    end
+    combatStartTime = nil
+    combatActive = false
+    UpdateCombatTimerText()
+    UpdateCombatTimerRefreshMode()
+end, IsCombatTimerEnabled)
+Addon:RegisterEvent("PLAYER_LOGIN", function()
+    ApplyCombatTimer(true)
+    QueueInstanceTimerStateUpdate()
+end, IsCombatTimerEnabled)
+for _, event in ipairs({
+    "PLAYER_ENTERING_WORLD",
+    "ZONE_CHANGED_NEW_AREA",
+    "LOADING_SCREEN_DISABLED",
+    "SCENARIO_UPDATE",
+}) do
+    Addon:RegisterEvent(event, function()
+        ApplyCombatTimer(true)
+        QueueInstanceTimerStateUpdate()
+    end, IsCombatTimerEnabled)
+end
+for _, event in ipairs({ "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED" }) do
+    Addon:RegisterEvent(event, function()
+        ApplyCombatTimer(true)
+    end, IsCombatTimerEnabled)
 end

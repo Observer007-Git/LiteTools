@@ -8,6 +8,8 @@ local DELETE_CONFIRM_DIALOGS = {
 
 local deleteHookInstalled = false
 local cinematicHooksInstalled = false
+local cinematicFrameHookInstalled = false
+local movieFrameHookInstalled = false
 
 local function DB()
     return Addon:GetDatabase()
@@ -62,26 +64,30 @@ local function InstallDeleteHook()
 end
 
 local function InstallCinematicHooks()
-    if cinematicHooksInstalled or not CinematicFrame or not MovieFrame then
-        return
+    if not cinematicFrameHookInstalled and CinematicFrame then
+        CinematicFrame:HookScript("OnKeyDown", function(frame, key)
+            local db = DB()
+            if db and db.skipCinematics and key == "SPACE" and frame:IsShown() then
+                if frame.closeDialog then
+                    frame.closeDialog:Hide()
+                end
+                CinematicFrame_CancelCinematic()
+            end
+        end)
+        cinematicFrameHookInstalled = true
     end
 
-    CinematicFrame:HookScript("OnKeyDown", function(frame, key)
-        local db = DB()
-        if db and db.skipCinematics and key == "SPACE" and frame:IsShown() then
-            if frame.closeDialog then
-                frame.closeDialog:Hide()
+    if not movieFrameHookInstalled and MovieFrame then
+        MovieFrame:HookScript("OnKeyUp", function(frame, key)
+            local db = DB()
+            if db and db.skipCinematics and key == "SPACE" and frame:IsShown() then
+                frame:FinishMovie()
             end
-            CinematicFrame_CancelCinematic()
-        end
-    end)
-    MovieFrame:HookScript("OnKeyUp", function(frame, key)
-        local db = DB()
-        if db and db.skipCinematics and key == "SPACE" and frame:IsShown() then
-            frame:FinishMovie()
-        end
-    end)
-    cinematicHooksInstalled = true
+        end)
+        movieFrameHookInstalled = true
+    end
+
+    cinematicHooksInstalled = cinematicFrameHookInstalled and movieFrameHookInstalled
 end
 
 local function ApplyDeleteSetting(enabled)
@@ -102,6 +108,15 @@ local function Initialize()
     ApplyCinematicSetting(Addon:GetSetting("skipCinematics"))
 end
 
+local function HasEnabledFeature(db)
+    return db.autoTypeDelete or db.skipCinematics
+end
+
 Addon:RegisterSetting("autoTypeDelete", false, Addon.BooleanSetting, ApplyDeleteSetting)
 Addon:RegisterSetting("skipCinematics", false, Addon.BooleanSetting, ApplyCinematicSetting)
-Addon:RegisterEvent("PLAYER_LOGIN", Initialize)
+Addon:RegisterEvent("PLAYER_LOGIN", Initialize, HasEnabledFeature)
+Addon:RegisterEvent("ADDON_LOADED", function()
+    if Addon:GetSetting("skipCinematics") then
+        InstallCinematicHooks()
+    end
+end, function(db) return db.skipCinematics and not cinematicHooksInstalled end)

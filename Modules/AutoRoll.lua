@@ -7,50 +7,39 @@ local CHOICES = {
     { labelKey = "TRANSMOG", rollType = 4, suffix = "transmog" },
     { labelKey = "PASS", rollType = 0, suffix = "pass" },
 }
-
-local BACKGROUND_TEXTURE =
-    "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\loot-background"
-local PREVIEW_TEXTURE =
-    "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\wantall"
-local PANEL_HEIGHT = 96
-local LEFT_BACKGROUND_WIDTH = 82
-local PREVIEW_WIDTH = 67
-local PREVIEW_HEIGHT = 66
-local PREVIEW_CENTER_X = 50
-local PREVIEW_CENTER_Y = 45
-
--- Manual button layout: increase horizontal padding to move right;
--- increase top padding to move down; spacing controls the gaps between buttons.
-local BUTTON_SIZE = 48
-local BUTTON_SPACING = 10
-local BUTTON_HORIZONTAL_PADDING = 30
-local BUTTON_TOP = 20
-local BUTTON_OFFSETS = {
-    [1] = { x = -8, y = -2 }, -- Need
-    [2] = { x = 2, y = 1 }, -- Greed
-    [3] = { x = 8, y = 0 }, -- Disenchant
-    [4] = { x = 8, y = 0 }, -- Transmog
-    [5] = { x = 8, y = 1 }, -- Pass
-}
-local BUTTON_EXPANSIONS = {
-    [1] = 1, -- Need: expand 1px on every side
-    [2] = 1, -- Greed: expand 1px on every side
-}
-local BUTTONS_WIDTH = #CHOICES * BUTTON_SIZE + (#CHOICES - 1) * BUTTON_SPACING
-local RIGHT_BACKGROUND_WIDTH = 365
-local PANEL_WIDTH = LEFT_BACKGROUND_WIDTH + RIGHT_BACKGROUND_WIDTH
-local BACKGROUND_TEXTURE_WIDTH = 512
-local BACKGROUND_TEXTURE_HEIGHT = 128
-local BACKGROUND_VISIBLE_LEFT = 5 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_SPLIT = 82 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_VISIBLE_RIGHT = 362 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_VISIBLE_TOP = 25 / BACKGROUND_TEXTURE_HEIGHT
-local BACKGROUND_VISIBLE_BOTTOM = 115 / BACKGROUND_TEXTURE_HEIGHT
 for _, choice in ipairs(CHOICES) do
     choice.normalAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-up"
     choice.pushedAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-down"
     choice.highlightAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-highlight"
 end
+
+local BACKGROUND_TEXTURE = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\loot-background"
+local PREVIEW_TEXTURE = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\wantall"
+local PANEL_HEIGHT = 96
+local LEFT_BACKGROUND_WIDTH = 82
+local RIGHT_BACKGROUND_WIDTH = 365
+local PANEL_WIDTH = LEFT_BACKGROUND_WIDTH + RIGHT_BACKGROUND_WIDTH
+local PREVIEW_WIDTH, PREVIEW_HEIGHT = 67, 66
+local PREVIEW_CENTER_X, PREVIEW_CENTER_Y = 50, 45
+local BUTTON_SIZE, BUTTON_SPACING = 48, 10
+local BUTTON_HORIZONTAL_PADDING, BUTTON_TOP = 30, 20
+local BUTTON_OFFSETS = {
+    [1] = { x = -8, y = -2 },
+    [2] = { x = 2, y = 1 },
+    [3] = { x = 8, y = 0 },
+    [4] = { x = 8, y = 0 },
+    [5] = { x = 8, y = 1 },
+}
+local BUTTON_EXPANSIONS = { [1] = 1, [2] = 1 }
+local BACKGROUND_TEXTURE_WIDTH, BACKGROUND_TEXTURE_HEIGHT = 512, 128
+local BACKGROUND_VISIBLE_LEFT = 5 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_SPLIT = 82 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_VISIBLE_RIGHT = 362 / BACKGROUND_TEXTURE_WIDTH
+local BACKGROUND_VISIBLE_TOP = 25 / BACKGROUND_TEXTURE_HEIGHT
+local BACKGROUND_VISIBLE_BOTTOM = 115 / BACKGROUND_TEXTURE_HEIGHT
+local ALL_OF_IT_PANEL_SIZE = 96
+local ALL_OF_IT_BUTTON_SIZE = 88
+local ALL_OF_IT_ATLAS = "charactercreate-icon-dice"
 
 local panel
 local panelAnchor
@@ -61,18 +50,32 @@ local submittedRolls = {}
 local previewMode = false
 local UpdatePanel
 
-local function DB()
-    return Addon:GetDatabase()
+local function DB() return Addon:GetDatabase() end
+
+local function SanitizeSoundID(value)
+    local soundID = tonumber(tostring(value or ""):match("^%s*(.-)%s*$"))
+    if not soundID or soundID <= 0 or soundID ~= math.floor(soundID) then return "" end
+    return tostring(soundID)
+end
+
+local function PlayConfiguredSound(ignoreMute)
+    local db = DB()
+    if not db or (db.autoRollMuted and not ignoreMute) then return false end
+    local soundID = tonumber(db.autoRollSoundID)
+    if not soundID or type(PlaySoundFile) ~= "function" then return false end
+    local ok, played = pcall(PlaySoundFile, soundID, "Master")
+    return ok and played ~= false
+end
+
+function Addon:PreviewAutoRollSound()
+    return PlayConfiguredSound(true)
 end
 
 local function CollectPendingRolls()
-    local queue = {}
-    local seen = {}
-    local indexedFrames = {}
+    if not GroupLootContainer then return {} end
+    local queue, seen, indexedFrames = {}, {}, {}
     for index, rollFrame in pairs(GroupLootContainer.rollFrames or {}) do
-        if type(index) == "number"
-            and rollFrame
-            and rollFrame.rollID
+        if type(index) == "number" and rollFrame and rollFrame.rollID
             and not submittedRolls[rollFrame.rollID]
         then
             indexedFrames[#indexedFrames + 1] = { index = index, rollID = rollFrame.rollID }
@@ -96,8 +99,8 @@ local function CollectPendingRolls()
 end
 
 local function GetAllowedChoices(rollID)
-    local _, itemName, _, _, _, canNeed, canGreed, canDisenchant, _, _, _, _, canTransmog =
-        GetLootRollItemInfo(rollID)
+    local _, itemName, _, _, _, canNeed, canGreed, canDisenchant,
+        _, _, _, _, canTransmog = GetLootRollItemInfo(rollID)
     if not itemName then return nil end
     return { canNeed, canGreed, canDisenchant, canTransmog, true }
 end
@@ -106,9 +109,7 @@ local function GetPreferredRollType(rollID, startingPriority)
     local allowed = GetAllowedChoices(rollID)
     if not allowed then return nil end
     for priority = startingPriority, #CHOICES do
-        if allowed[priority] then
-            return CHOICES[priority].rollType
-        end
+        if allowed[priority] then return CHOICES[priority].rollType end
     end
     return 0
 end
@@ -122,8 +123,7 @@ local ProcessBatch
 
 local function CompleteConfirmation(rollID, rollType)
     local currentBatch = batch
-    if not currentBatch
-        or currentBatch.waitingRollID ~= rollID
+    if not currentBatch or currentBatch.waitingRollID ~= rollID
         or currentBatch.waitingRollType ~= rollType
     then
         return
@@ -132,9 +132,7 @@ local function CompleteConfirmation(rollID, rollType)
     currentBatch.waitingRollType = nil
     currentBatch.currentRollID = nil
     C_Timer.After(0, function()
-        if batch == currentBatch and not currentBatch.waitingRollID then
-            ProcessBatch()
-        end
+        if batch == currentBatch and not currentBatch.waitingRollID then ProcessBatch() end
     end)
 end
 
@@ -144,8 +142,7 @@ local function HandleConfirmation(rollID, rollType)
     currentBatch.waitingRollID = rollID
     currentBatch.waitingRollType = rollType
     C_Timer.After(0, function()
-        if not batch
-            or batch.waitingRollID ~= rollID
+        if not batch or batch.waitingRollID ~= rollID
             or batch.waitingRollType ~= rollType
             or type(ConfirmLootRoll) ~= "function"
         then
@@ -186,6 +183,7 @@ ProcessBatch = function()
         local rollType = GetPreferredRollType(rollID, currentBatch.startingPriority)
         if rollType ~= nil then
             currentBatch.currentRollID = rollID
+            currentBatch.submittedCount = currentBatch.submittedCount + 1
             submittedRolls[rollID] = true
             RollOnLoot(rollID, rollType)
             if batch ~= currentBatch or currentBatch.waitingRollID then return end
@@ -199,31 +197,33 @@ local function StartBatch(startingPriority)
     if not db or not db.autoRollGear or batch or not GroupLootContainer then return end
     local queue = CollectPendingRolls()
     if #queue == 0 then return end
-    batch = { queue = queue, index = 1, startingPriority = startingPriority }
+    local currentBatch = {
+        queue = queue,
+        index = 1,
+        startingPriority = startingPriority,
+        submittedCount = 0,
+    }
+    batch = currentBatch
     UpdatePanel()
     ProcessBatch()
+    if currentBatch.submittedCount > 0 then PlayConfiguredSound(false) end
 end
 
 local function PositionPanel()
     local db = DB()
     if not panel or not GroupLootContainer or not db then return end
-    if db.showAutoRollPanelAnchor and panelAnchor then
-        panel:ClearAllPoints()
-        panel:SetPoint("TOP", panelAnchor, "BOTTOM", 0, -5)
-        return
-    end
-    local relativeFrame = GroupLootContainer
-    local groupAnchor = Addon.Alerts and Addon.Alerts:GetGroupLootAnchor()
-    if db.showGroupLootAnchor and groupAnchor then relativeFrame = groupAnchor end
     panel:ClearAllPoints()
-    panel:SetPoint("TOP", relativeFrame, "BOTTOM", 0, -5)
+    if db.showAutoRollPanelAnchor and panelAnchor then
+        panel:SetPoint("TOP", panelAnchor, "BOTTOM", 0, -5)
+    else
+        panel:SetPoint("TOP", GroupLootContainer, "BOTTOM", 0, -5)
+    end
 end
 
 local function PositionPanelAnchor()
-    if panelAnchor then
-        Addon.Anchors:Position(panelAnchor, "autoRollPanelAnchorPosition", 0.5, 0.18)
-        PositionPanel()
-    end
+    if not panelAnchor then return end
+    Addon.Anchors:Position(panelAnchor, "autoRollPanelAnchorPosition", 0.5, 0.18)
+    PositionPanel()
 end
 
 local function EnsurePanelAnchor()
@@ -244,9 +244,6 @@ end
 local function ApplyPanelAnchor(reposition)
     local db = DB()
     if not db then return end
-    if db.showAutoRollPanelAnchor and not db.autoRollPanelAnchorPosition then
-        db.autoRollPanelAnchorPosition = { version = 2, x = 0.5, y = 0.18 }
-    end
     if db.showAutoRollPanelAnchor then
         local anchor = EnsurePanelAnchor()
         if reposition then PositionPanelAnchor() end
@@ -257,8 +254,7 @@ local function ApplyPanelAnchor(reposition)
     PositionPanel()
 end
 
-local function UpdateButtonStates(pendingRolls)
-    if not panel or not panel.buttons then return end
+local function UpdateRegularButtonStates(pendingRolls)
     local available = {}
     for _, rollID in ipairs(pendingRolls) do
         local allowed = GetAllowedChoices(rollID)
@@ -272,41 +268,75 @@ local function UpdateButtonStates(pendingRolls)
         local enabled = not batch and not not available[priority]
         button:SetEnabled(enabled)
         button:SetAlpha(enabled and 1 or 0.20)
-        button.autoRollChoiceAvailable = not not available[priority]
-        if enabled then
-            button.availabilityGlow:Show()
-        else
-            button.availabilityGlow:Hide()
-            button.selectionGlow:Hide()
-        end
+        button.choiceAvailable = not not available[priority]
+        button.availabilityGlow:SetShown(enabled)
+        if not enabled then button.selectionGlow:Hide() end
     end
 end
 
-local function ShowAllButtonsForPreview()
-    if not panel or not panel.buttons then return end
+local function ShowRegularPreview()
     for _, button in ipairs(panel.buttons) do
         button:SetEnabled(true)
         button:SetAlpha(1)
-        button.autoRollChoiceAvailable = true
+        button.choiceAvailable = true
         button.availabilityGlow:Show()
+    end
+end
+
+local function ApplyPanelMode(fullAllMode)
+    panel.regularFrame:SetShown(not fullAllMode)
+    panel.allOfItButton:SetShown(fullAllMode)
+    if fullAllMode then
+        panel:SetSize(ALL_OF_IT_PANEL_SIZE, ALL_OF_IT_PANEL_SIZE)
+    else
+        panel:SetSize(PANEL_WIDTH, PANEL_HEIGHT)
     end
 end
 
 UpdatePanel = function()
     if not panel then return end
-    local pendingRolls = CollectPendingRolls()
-    PositionPanel()
-    if previewMode and #pendingRolls == 0 then
-        ShowAllButtonsForPreview()
-    else
-        UpdateButtonStates(pendingRolls)
-    end
     local db = DB()
-    panel:SetShown(not not (
-        previewMode
-        or (db and db.autoRollGear and GroupLootContainer
-            and GroupLootContainer:IsShown() and #pendingRolls > 0)
-    ))
+    if not previewMode and (not db or not db.autoRollGear) then
+        panel:Hide()
+        return
+    end
+    local pendingRolls = CollectPendingRolls()
+    local fullAllMode = db and db.autoRollFullAll
+    ApplyPanelMode(fullAllMode)
+    PositionPanel()
+    if fullAllMode then
+        local enabled = not batch and (#pendingRolls > 0 or previewMode)
+        panel.allOfItButton:SetEnabled(enabled)
+        panel.allOfItButton:SetAlpha(enabled and 1 or 0.20)
+        panel.allOfItButton.availabilityGlow:SetShown(enabled)
+    elseif previewMode and #pendingRolls == 0 then
+        ShowRegularPreview()
+    else
+        UpdateRegularButtonStates(pendingRolls)
+    end
+    panel:SetShown(previewMode or (db and db.autoRollGear and GroupLootContainer:IsShown()
+        and #pendingRolls > 0))
+end
+
+local function ConfigureButtonTooltip(button, startingPriority)
+    button:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        if self:IsEnabled() and self.selectionGlow then self.selectionGlow:Show() end
+        if startingPriority == #CHOICES then
+            GameTooltip:SetText(Addon.L.PASS_ALL_LOOT)
+        elseif self.choiceAvailable then
+            GameTooltip:SetText(Addon.L[CHOICES[startingPriority].labelKey])
+            GameTooltip:AddLine(Addon.L.AUTO_ROLL_TOOLTIP, 1, 1, 1, true)
+        else
+            GameTooltip:SetText(Addon.L[CHOICES[startingPriority].labelKey])
+            GameTooltip:AddLine(Addon.L.AUTO_ROLL_UNAVAILABLE, 1, 0.2, 0.2, true)
+        end
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", function(self)
+        if self.selectionGlow then self.selectionGlow:Hide() end
+        GameTooltip:Hide()
+    end)
 end
 
 local function EnsurePanel()
@@ -316,61 +346,38 @@ local function EnsurePanel()
     panel:SetFrameStrata("DIALOG")
     panel:SetPoint("TOP", GroupLootContainer, "BOTTOM", 0, -5)
 
-    local leftBackground = panel:CreateTexture(nil, "BORDER")
+    local regularFrame = CreateFrame("Frame", nil, panel)
+    regularFrame:SetAllPoints()
+    panel.regularFrame = regularFrame
+    local leftBackground = regularFrame:CreateTexture(nil, "BORDER")
     leftBackground:SetSize(LEFT_BACKGROUND_WIDTH, PANEL_HEIGHT)
     leftBackground:SetPoint("TOPLEFT")
     leftBackground:SetTexture(BACKGROUND_TEXTURE)
-    leftBackground:SetTexCoord(
-        BACKGROUND_VISIBLE_LEFT,
-        BACKGROUND_SPLIT,
-        BACKGROUND_VISIBLE_TOP,
-        BACKGROUND_VISIBLE_BOTTOM
-    )
-    panel.leftBackground = leftBackground
-
-    local rightBackground = panel:CreateTexture(nil, "BORDER")
+    leftBackground:SetTexCoord(BACKGROUND_VISIBLE_LEFT, BACKGROUND_SPLIT,
+        BACKGROUND_VISIBLE_TOP, BACKGROUND_VISIBLE_BOTTOM)
+    local rightBackground = regularFrame:CreateTexture(nil, "BORDER")
     rightBackground:SetSize(RIGHT_BACKGROUND_WIDTH, PANEL_HEIGHT)
     rightBackground:SetPoint("TOPLEFT", leftBackground, "TOPRIGHT")
     rightBackground:SetTexture(BACKGROUND_TEXTURE)
-    rightBackground:SetTexCoord(
-        BACKGROUND_SPLIT,
-        BACKGROUND_VISIBLE_RIGHT,
-        BACKGROUND_VISIBLE_TOP,
-        BACKGROUND_VISIBLE_BOTTOM
-    )
-    panel.rightBackground = rightBackground
-
-    local panelIcon = panel:CreateTexture(nil, "BACKGROUND", nil, -1)
+    rightBackground:SetTexCoord(BACKGROUND_SPLIT, BACKGROUND_VISIBLE_RIGHT,
+        BACKGROUND_VISIBLE_TOP, BACKGROUND_VISIBLE_BOTTOM)
+    local panelIcon = regularFrame:CreateTexture(nil, "BACKGROUND", nil, -1)
     panelIcon:SetSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
-    panelIcon:SetPoint(
-        "CENTER",
-        leftBackground,
-        "TOPLEFT",
-        PREVIEW_CENTER_X,
-        -PREVIEW_CENTER_Y
-    )
+    panelIcon:SetPoint("CENTER", leftBackground, "TOPLEFT",
+        PREVIEW_CENTER_X, -PREVIEW_CENTER_Y)
     panelIcon:SetTexture(PREVIEW_TEXTURE)
     panelIcon:SetTexCoord(0, 1, 0, 1)
-    panel.icon = panelIcon
 
     panel.buttons = {}
     for index, choice in ipairs(CHOICES) do
-        local button = CreateFrame("Button", "LiteToolsAutoRollButton" .. index, panel)
+        local button = CreateFrame("Button", "LiteToolsAutoRollButton" .. index, regularFrame)
         local expansion = BUTTON_EXPANSIONS[index] or 0
         button:SetSize(BUTTON_SIZE + expansion * 2, BUTTON_SIZE + expansion * 2)
         local offset = BUTTON_OFFSETS[index]
-        local buttonX = LEFT_BACKGROUND_WIDTH
-            + BUTTON_HORIZONTAL_PADDING
-            + (index - 1) * (BUTTON_SIZE + BUTTON_SPACING)
-            + offset.x
-            - expansion
-        button:SetPoint(
-            "TOPLEFT",
-            panel,
-            "TOPLEFT",
-            buttonX,
-            -BUTTON_TOP + offset.y + expansion
-        )
+        local x = LEFT_BACKGROUND_WIDTH + BUTTON_HORIZONTAL_PADDING
+            + (index - 1) * (BUTTON_SIZE + BUTTON_SPACING) + offset.x - expansion
+        button:SetPoint("TOPLEFT", regularFrame, "TOPLEFT",
+            x, -BUTTON_TOP + offset.y + expansion)
         button:SetNormalAtlas(choice.normalAtlas, false)
         button:SetPushedAtlas(choice.pushedAtlas, false)
         button:SetHighlightAtlas(choice.highlightAtlas, "ADD")
@@ -387,31 +394,34 @@ local function EnsurePanel()
         selectionGlow:SetAtlas("ChallengeMode-KeystoneSlotFrameGlow", false)
         selectionGlow:Hide()
         button.selectionGlow = selectionGlow
-
         local startingPriority = index
         button:SetScript("OnClick", function() StartBatch(startingPriority) end)
-        button:SetScript("OnEnter", function(self)
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            if self:IsEnabled() then
-                self.selectionGlow:Show()
-            end
-            if startingPriority == #CHOICES then
-                GameTooltip:SetText(Addon.L.PASS_ALL_LOOT)
-            elseif self.autoRollChoiceAvailable then
-                GameTooltip:SetText(Addon.L[choice.labelKey])
-                GameTooltip:AddLine(Addon.L.AUTO_ROLL_TOOLTIP, 1, 1, 1, true)
-            else
-                GameTooltip:SetText(Addon.L[choice.labelKey])
-                GameTooltip:AddLine(Addon.L.AUTO_ROLL_UNAVAILABLE, 1, 0.2, 0.2, true)
-            end
-            GameTooltip:Show()
-        end)
-        button:SetScript("OnLeave", function(self)
-            self.selectionGlow:Hide()
-            GameTooltip:Hide()
-        end)
+        ConfigureButtonTooltip(button, startingPriority)
         panel.buttons[index] = button
     end
+
+    local allOfItButton = CreateFrame("Button", "LiteToolsAllOfItButton", panel)
+    allOfItButton:SetSize(ALL_OF_IT_BUTTON_SIZE, ALL_OF_IT_BUTTON_SIZE)
+    allOfItButton:SetPoint("CENTER")
+    allOfItButton:SetNormalAtlas(ALL_OF_IT_ATLAS, false)
+    allOfItButton:SetPushedAtlas(ALL_OF_IT_ATLAS, false)
+    allOfItButton:SetHighlightAtlas(ALL_OF_IT_ATLAS, "ADD")
+    local allGlow = allOfItButton:CreateTexture(nil, "OVERLAY")
+    allGlow:SetAllPoints()
+    allGlow:SetAtlas(ALL_OF_IT_ATLAS, false)
+    allGlow:SetBlendMode("ADD")
+    allGlow:SetAlpha(0.35)
+    allGlow:Hide()
+    allOfItButton.availabilityGlow = allGlow
+    allOfItButton:SetScript("OnClick", function() StartBatch(1) end)
+    allOfItButton:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(Addon.L.ALL_OF_IT)
+        GameTooltip:AddLine(Addon.L.ALL_OF_IT_TOOLTIP, 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    allOfItButton:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    panel.allOfItButton = allOfItButton
     panel:Hide()
     return panel
 end
@@ -424,11 +434,8 @@ local function SetPreviewMode(enabled)
         return
     end
     UpdatePanel()
-    print(
-        "|cffffd200LiteTools:|r "
-            .. (previewMode and Addon.L.AUTO_ROLL_PREVIEW_SHOWN
-                or Addon.L.AUTO_ROLL_PREVIEW_HIDDEN)
-    )
+    print("|cffffd200LiteTools:|r "
+        .. (previewMode and Addon.L.AUTO_ROLL_PREVIEW_SHOWN or Addon.L.AUTO_ROLL_PREVIEW_HIDDEN))
 end
 
 SLASH_LITETOOLSROLLPREVIEW1 = "/ltrollpreview"
@@ -436,18 +443,13 @@ SLASH_LITETOOLSROLLPREVIEW2 = "/ltrp"
 SlashCmdList = SlashCmdList or {}
 SlashCmdList.LITETOOLSROLLPREVIEW = function(message)
     local command = (message or ""):match("^%s*(.-)%s*$"):lower()
-    if command == "show" then
-        SetPreviewMode(true)
-    elseif command == "hide" then
-        SetPreviewMode(false)
-    else
-        SetPreviewMode(not previewMode)
-    end
+    if command == "show" then SetPreviewMode(true)
+    elseif command == "hide" then SetPreviewMode(false)
+    else SetPreviewMode(not previewMode) end
 end
 
 local function InstallConfirmationHook()
-    if confirmationHookInstalled
-        or type(hooksecurefunc) ~= "function"
+    if confirmationHookInstalled or type(hooksecurefunc) ~= "function"
         or type(ConfirmLootRoll) ~= "function"
     then
         return
@@ -473,7 +475,7 @@ local function InstallPanelHooks()
     panelHooksInstalled = true
 end
 
-local function ApplyAutoRoll()
+local function ApplyEnabled()
     local db = DB()
     if not db then return end
     if db.autoRollGear and GroupLootContainer then
@@ -488,49 +490,54 @@ local function ApplyAutoRoll()
     end
 end
 
-Addon:RegisterSetting("autoRollGear", false, Addon.BooleanSetting, ApplyAutoRoll)
+Addon:RegisterSetting("autoRollGear", false, Addon.BooleanSetting, ApplyEnabled)
+Addon:RegisterSetting("autoRollFullAll", false, Addon.BooleanSetting, UpdatePanel)
+Addon:RegisterSetting("autoRollMuted", false, Addon.BooleanSetting)
+Addon:RegisterSetting("autoRollSoundID", "", SanitizeSoundID)
 Addon:RegisterSetting("autoRollPanelAnchorPosition", nil, Addon.PositionSetting)
 Addon:RegisterSetting("autoRollPanelAnchorHidden", false, Addon.BooleanSetting)
 Addon:RegisterSetting("showAutoRollPanelAnchor", false, Addon.BooleanSetting, function(value)
     local db = DB()
-    if value then db.autoRollPanelAnchorHidden = false end
+    if value and db then db.autoRollPanelAnchorHidden = false end
     ApplyPanelAnchor(true)
 end)
+
 Addon:RegisterSettingCallback("showGroupLootAnchor", UpdatePanel)
 
-Addon:RegisterEvent("PLAYER_LOGIN", function()
-    if Addon:GetSetting("showAutoRollPanelAnchor") then ApplyPanelAnchor(true) end
-    ApplyAutoRoll()
-end)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
-    if Addon:GetSetting("showAutoRollPanelAnchor") then ApplyPanelAnchor(true) end
-    ApplyAutoRoll()
-end)
-for _, event in ipairs({ "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED" }) do
-    Addon:RegisterEvent(event, function()
-        if Addon:GetSetting("showAutoRollPanelAnchor") then ApplyPanelAnchor(true) end
-        UpdatePanel()
-    end, function(db) return db.showAutoRollPanelAnchor end)
+local function HasUI(db)
+    return db and (db.autoRollGear or db.showAutoRollPanelAnchor)
 end
-Addon:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED", function()
-    if Addon:GetSetting("showAutoRollPanelAnchor") then ApplyPanelAnchor(true) end
-end, function(db) return db.showAutoRollPanelAnchor end)
+
+Addon:RegisterEvent("PLAYER_LOGIN", function()
+    ApplyPanelAnchor(true)
+    ApplyEnabled()
+end, HasUI)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
+    ApplyPanelAnchor(true)
+    ApplyEnabled()
+end, HasUI)
+for _, event in ipairs({ "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED", "EDIT_MODE_LAYOUTS_UPDATED" }) do
+    Addon:RegisterEvent(event, function()
+        ApplyPanelAnchor(true)
+        if UpdatePanel then UpdatePanel() end
+    end, function(db) return db and db.showAutoRollPanelAnchor end)
+end
 Addon:RegisterEvent("CONFIRM_LOOT_ROLL", function(_, ...) HandleConfirmation(...) end,
-    function(db) return db.autoRollGear end)
+    function(db) return db and db.autoRollGear end)
 Addon:RegisterEvent("CONFIRM_DISENCHANT_ROLL", function(_, ...) HandleConfirmation(...) end,
-    function(db) return db.autoRollGear end)
+    function(db) return db and db.autoRollGear end)
 Addon:RegisterEvent("CANCEL_LOOT_ROLL", function(_, ...)
     HandleCancelled(...)
     UpdatePanel()
-end, function(db) return db.autoRollGear end)
+end, function(db) return db and db.autoRollGear end)
 Addon:RegisterEvent("CANCEL_ALL_LOOT_ROLLS", function()
     StopBatch()
     wipe(submittedRolls)
     UpdatePanel()
-end, function(db) return db.autoRollGear end)
+end, function(db) return db and db.autoRollGear end)
 Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_UIPanels_Game" then
-        if Addon:GetSetting("showAutoRollPanelAnchor") then ApplyPanelAnchor(true) end
-        ApplyAutoRoll()
+        ApplyPanelAnchor(true)
+        ApplyEnabled()
     end
-end)
+end, HasUI)
