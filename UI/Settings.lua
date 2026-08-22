@@ -61,7 +61,7 @@ local function CreateSlider(
     decimals = decimals or 0
     local slider = CreateFrame("Slider", name, parent, "OptionsSliderTemplate")
     slider:SetPoint("TOPLEFT", x + 34, y - 20)
-    slider:SetWidth(190)
+    slider:SetWidth(150)
     slider:SetMinMaxValues(minimum, maximum)
     slider:SetValueStep(step)
     slider:SetObeyStepOnDrag(true)
@@ -72,7 +72,7 @@ local function CreateSlider(
     if high then high:SetText("") end
 
     local minus = CreateFrame("Button", name .. "DecreaseButton", parent, "UIPanelButtonTemplate")
-    minus:SetPoint("TOPLEFT", x, y - 26)
+    minus:SetPoint("RIGHT", slider, "LEFT", -10, 0)
     minus:SetSize(24, 24)
     SetButtonText(minus, "−")
     minus:SetScript("OnClick", function()
@@ -81,11 +81,25 @@ local function CreateSlider(
     end)
 
     local plus = CreateFrame("Button", name .. "IncreaseButton", parent, "UIPanelButtonTemplate")
-    plus:SetPoint("TOPLEFT", x + 234, y - 26)
+    plus:SetPoint("LEFT", slider, "RIGHT", 10, 0)
     plus:SetSize(24, 24)
     SetButtonText(plus, "+")
     plus:SetScript("OnClick", function()
         Addon:SetSetting(settingKey, Addon:GetSetting(settingKey) + step)
+        slider:Refresh()
+    end)
+
+    local reset = CreateFrame(
+        "Button",
+        name .. "ResetButton",
+        parent,
+        "UIPanelButtonTemplate"
+    )
+    reset:SetPoint("LEFT", plus, "RIGHT", 8, 0)
+    reset:SetSize(72, 24)
+    SetButtonText(reset, L.RESET_DEFAULT)
+    reset:SetScript("OnClick", function()
+        Addon:SetSetting(settingKey, Addon.defaults[settingKey])
         slider:Refresh()
     end)
 

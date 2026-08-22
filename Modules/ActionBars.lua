@@ -45,7 +45,7 @@ local function GetAlias(key)
         remainingKey = nextKey
     end
     parts[#parts + 1] = GetAliasPart(remainingKey)
-    return table.concat(parts, "+")
+    return table.concat(parts)
 end
 
 local function ApplyAlias(button)

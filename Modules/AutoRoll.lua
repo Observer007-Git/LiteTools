@@ -1,4 +1,4 @@
-local ADDON_NAME, Addon = ...
+local _, Addon = ...
 
 local CHOICES = {
     { labelKey = "NEED", rollType = 1, suffix = "need" },
@@ -13,14 +13,10 @@ for _, choice in ipairs(CHOICES) do
     choice.highlightAtlas = "lootroll-toast-icon-" .. choice.suffix .. "-highlight"
 end
 
-local BACKGROUND_TEXTURE = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\loot-background"
-local PREVIEW_TEXTURE = "Interface\\AddOns\\" .. ADDON_NAME .. "\\Media\\wantall"
 local PANEL_HEIGHT = 96
 local LEFT_BACKGROUND_WIDTH = 82
 local RIGHT_BACKGROUND_WIDTH = 365
 local PANEL_WIDTH = LEFT_BACKGROUND_WIDTH + RIGHT_BACKGROUND_WIDTH
-local PREVIEW_WIDTH, PREVIEW_HEIGHT = 67, 66
-local PREVIEW_CENTER_X, PREVIEW_CENTER_Y = 50, 45
 local BUTTON_SIZE, BUTTON_SPACING = 48, 10
 local BUTTON_HORIZONTAL_PADDING, BUTTON_TOP = 30, 20
 local BUTTON_OFFSETS = {
@@ -31,12 +27,6 @@ local BUTTON_OFFSETS = {
     [5] = { x = 8, y = 1 },
 }
 local BUTTON_EXPANSIONS = { [1] = 1, [2] = 1 }
-local BACKGROUND_TEXTURE_WIDTH, BACKGROUND_TEXTURE_HEIGHT = 512, 128
-local BACKGROUND_VISIBLE_LEFT = 5 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_SPLIT = 82 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_VISIBLE_RIGHT = 362 / BACKGROUND_TEXTURE_WIDTH
-local BACKGROUND_VISIBLE_TOP = 25 / BACKGROUND_TEXTURE_HEIGHT
-local BACKGROUND_VISIBLE_BOTTOM = 115 / BACKGROUND_TEXTURE_HEIGHT
 local ALL_OF_IT_PANEL_SIZE = 96
 local ALL_OF_IT_BUTTON_SIZE = 88
 local ALL_OF_IT_ATLAS = "charactercreate-icon-dice"
@@ -349,24 +339,11 @@ local function EnsurePanel()
     local regularFrame = CreateFrame("Frame", nil, panel)
     regularFrame:SetAllPoints()
     panel.regularFrame = regularFrame
-    local leftBackground = regularFrame:CreateTexture(nil, "BORDER")
-    leftBackground:SetSize(LEFT_BACKGROUND_WIDTH, PANEL_HEIGHT)
-    leftBackground:SetPoint("TOPLEFT")
-    leftBackground:SetTexture(BACKGROUND_TEXTURE)
-    leftBackground:SetTexCoord(BACKGROUND_VISIBLE_LEFT, BACKGROUND_SPLIT,
-        BACKGROUND_VISIBLE_TOP, BACKGROUND_VISIBLE_BOTTOM)
-    local rightBackground = regularFrame:CreateTexture(nil, "BORDER")
-    rightBackground:SetSize(RIGHT_BACKGROUND_WIDTH, PANEL_HEIGHT)
-    rightBackground:SetPoint("TOPLEFT", leftBackground, "TOPRIGHT")
-    rightBackground:SetTexture(BACKGROUND_TEXTURE)
-    rightBackground:SetTexCoord(BACKGROUND_SPLIT, BACKGROUND_VISIBLE_RIGHT,
-        BACKGROUND_VISIBLE_TOP, BACKGROUND_VISIBLE_BOTTOM)
-    local panelIcon = regularFrame:CreateTexture(nil, "BACKGROUND", nil, -1)
-    panelIcon:SetSize(PREVIEW_WIDTH, PREVIEW_HEIGHT)
-    panelIcon:SetPoint("CENTER", leftBackground, "TOPLEFT",
-        PREVIEW_CENTER_X, -PREVIEW_CENTER_Y)
-    panelIcon:SetTexture(PREVIEW_TEXTURE)
-    panelIcon:SetTexCoord(0, 1, 0, 1)
+    local regularBackground = regularFrame:CreateTexture(nil, "BACKGROUND")
+    regularBackground:SetSize(PANEL_WIDTH, 140)
+    regularBackground:SetPoint("CENTER", regularFrame, "CENTER", 33, 28)
+    regularBackground:SetAlpha(1)
+    regularBackground:SetAtlas("characterupdate_green-glow-and-filigree", false)
 
     panel.buttons = {}
     for index, choice in ipairs(CHOICES) do
@@ -389,9 +366,9 @@ local function EnsurePanel()
         availabilityGlow:Hide()
         button.availabilityGlow = availabilityGlow
         local selectionGlow = button:CreateTexture(nil, "BACKGROUND")
-        selectionGlow:SetSize(63, 63)
+        selectionGlow:SetSize(128, 128)
         selectionGlow:SetPoint("CENTER")
-        selectionGlow:SetAtlas("ChallengeMode-KeystoneSlotFrameGlow", false)
+        selectionGlow:SetAtlas("AftLevelup-WhiteStarBurst", false)
         selectionGlow:Hide()
         button.selectionGlow = selectionGlow
         local startingPriority = index

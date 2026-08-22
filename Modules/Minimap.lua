@@ -99,7 +99,16 @@ local function ApplyBorder()
     if not db or not MinimapCompassTexture then
         return
     end
-    if db.replaceMinimapBorder then
+    if db.hideMinimapBorder then
+        if not borderApplied then
+            defaultBorderWasShown = MinimapCompassTexture:IsShown()
+            borderApplied = true
+        end
+        MinimapCompassTexture:Hide()
+        if borderTexture then
+            borderTexture:Hide()
+        end
+    elseif db.replaceMinimapBorder then
         local texture = EnsureBorderTexture()
         if not texture then
             return
@@ -144,7 +153,9 @@ local function InstallBorderHook()
     end)
     if MinimapCompassTexture then
         hooksecurefunc(MinimapCompassTexture, "Show", function(texture)
-            if Addon:GetSetting("replaceMinimapBorder") then
+            if Addon:GetSetting("replaceMinimapBorder")
+                or Addon:GetSetting("hideMinimapBorder")
+            then
                 texture:Hide()
             end
         end)
@@ -362,6 +373,10 @@ Addon:RegisterSetting("replaceMinimapBorder", false, Addon.BooleanSetting, funct
     if value then InstallBorderHook() end
     QueueBorderUpdate()
 end)
+Addon:RegisterSetting("hideMinimapBorder", false, Addon.BooleanSetting, function(value)
+    if value then InstallBorderHook() end
+    QueueBorderUpdate()
+end)
 Addon:RegisterSetting("minimapHeaderScale", 100, Addon.NumberSetting(50, 200), ApplyHeaderScale)
 Addon:RegisterSetting("moveableMinimap", false, Addon.BooleanSetting, function() ApplyMoveSetting(false) end)
 Addon:RegisterSetting("minimapPositionLocked", false, Addon.BooleanSetting, function(value)
@@ -421,7 +436,9 @@ function Addon:SetMinimapBorderColor(red, green, blue, alpha, customized)
 end
 
 local function ApplyAll(immediateBorder)
-    if Addon:GetSetting("replaceMinimapBorder") then
+    if Addon:GetSetting("replaceMinimapBorder")
+        or Addon:GetSetting("hideMinimapBorder")
+    then
         InstallBorderHook()
         if immediateBorder then ApplyBorder() else QueueBorderUpdate() end
     end
@@ -430,7 +447,8 @@ local function ApplyAll(immediateBorder)
 end
 
 local function HasCustomMinimap(db)
-    return db.replaceMinimapBorder or db.minimapHeaderScale ~= 100 or db.moveableMinimap
+    return db.replaceMinimapBorder or db.hideMinimapBorder
+        or db.minimapHeaderScale ~= 100 or db.moveableMinimap
 end
 
 Addon:RegisterEvent("PLAYER_LOGIN", function() ApplyAll(true) end, HasCustomMinimap)
@@ -439,15 +457,26 @@ Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if positionUpdatePending then ApplyMoveSetting(true) end
 end)
 Addon:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED", function()
-    if Addon:GetSetting("replaceMinimapBorder") then QueueBorderUpdate() end
+    if Addon:GetSetting("replaceMinimapBorder")
+        or Addon:GetSetting("hideMinimapBorder")
+    then
+        QueueBorderUpdate()
+    end
     ApplyHeaderScale()
     ApplyMoveSetting(true)
 end, HasCustomMinimap)
 for _, event in ipairs({ "DISPLAY_SIZE_CHANGED", "UI_SCALE_CHANGED" }) do
     Addon:RegisterEvent(event, function()
-        if Addon:GetSetting("replaceMinimapBorder") then QueueBorderUpdate() end
+        if Addon:GetSetting("replaceMinimapBorder")
+            or Addon:GetSetting("hideMinimapBorder")
+        then
+            QueueBorderUpdate()
+        end
         if Addon:GetSetting("moveableMinimap") then ApplyMoveSetting(true) end
-    end, function(db) return db.replaceMinimapBorder or db.moveableMinimap end)
+    end, function(db)
+        return db.replaceMinimapBorder or db.hideMinimapBorder
+            or db.moveableMinimap
+    end)
 end
 Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_TimeManager" or loadedAddon == "Blizzard_TimeManager_Mainline" then
