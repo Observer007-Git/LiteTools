@@ -96,11 +96,9 @@ end
 
 Addon:RegisterSetting("showInstanceProgress", false, Addon.BooleanSetting, ApplySetting)
 Addon:RegisterEvent("PLAYER_LOGIN", function()
-    if IsEnabled() then
-        InstallClockHook()
-        RefreshSavedInstances()
-    end
-end)
+    InstallClockHook()
+    RefreshSavedInstances()
+end, IsEnabled)
 Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function()
     RefreshSavedInstances()
 end, IsEnabled)
@@ -114,4 +112,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     then
         InstallClockHook()
     end
-end)
+end, IsEnabled)

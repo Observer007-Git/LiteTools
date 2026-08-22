@@ -119,8 +119,8 @@ end
 
 Addon:RegisterSetting("hideChildBags", false, Addon.BooleanSetting, ApplySetting)
 Addon:RegisterSetting("hideAllBagButtons", false, Addon.BooleanSetting, ApplySetting)
-Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting)
+Addon:RegisterEvent("PLAYER_LOGIN", ApplySetting, IsEnabled)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplySetting, IsEnabled)
 Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if updatePending then
         ApplySetting()
@@ -131,5 +131,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_MainMenuBarBagButtons" then
         ApplySetting()
     end
-end)
-
+end, IsEnabled)

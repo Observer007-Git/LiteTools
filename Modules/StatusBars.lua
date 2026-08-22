@@ -24,6 +24,10 @@ local function HasHiddenBars()
     return db and (db.hideExperienceBar or db.hideReputationBar or db.hideHonorBar)
 end
 
+local function HasCustomStatusBars()
+    return HasCustomWidths() or HasHiddenBars()
+end
+
 local function GetBarWidth(barIndex)
     local db = DB()
     local barsEnum = StatusTrackingBarInfo and StatusTrackingBarInfo.BarsEnum
@@ -189,8 +193,8 @@ for _, key in ipairs({ "hideExperienceBar", "hideReputationBar", "hideHonorBar" 
     end)
 end
 
-Addon:RegisterEvent("PLAYER_LOGIN", function() ApplyAll(true) end)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function() ApplyAll(false) end)
+Addon:RegisterEvent("PLAYER_LOGIN", function() ApplyAll(true) end, HasCustomStatusBars)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", function() ApplyAll(false) end, HasCustomStatusBars)
 Addon:RegisterEvent("PLAYER_REGEN_ENABLED", function()
     if resizePending then
         resizePending = false
@@ -202,4 +206,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_ActionBar" then
         ApplyAll(true)
     end
-end)
+end, HasCustomStatusBars)

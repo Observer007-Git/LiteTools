@@ -233,8 +233,7 @@ local function ApplyGroupAnchor(reposition)
                 groupOriginalIgnoreFramePositionManager
             GroupLootContainer:ClearAllPoints()
             GroupLootContainer:SetParent(groupOriginalParent or UIParent)
-            if GroupLootContainer:IsShown()
-                and GroupLootContainer.layoutParent
+            if GroupLootContainer.layoutParent
                 and GroupLootContainer.layoutParent.AddManagedFrame
             then
                 GroupLootContainer.layoutParent:AddManagedFrame(GroupLootContainer)
@@ -297,8 +296,8 @@ local function ApplyEnabledAnchors()
     if db.showAchievementAlertAnchor then ApplyAchievementAnchor(true) end
 end
 
-Addon:RegisterEvent("PLAYER_LOGIN", ApplyEnabledAnchors)
-Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplyEnabledAnchors)
+Addon:RegisterEvent("PLAYER_LOGIN", ApplyEnabledAnchors, HasCustomAnchor)
+Addon:RegisterEvent("PLAYER_ENTERING_WORLD", ApplyEnabledAnchors, HasCustomAnchor)
 Addon:RegisterEvent("EDIT_MODE_LAYOUTS_UPDATED", ApplyEnabledAnchors, HasCustomAnchor)
 Addon:RegisterEvent("DISPLAY_SIZE_CHANGED", ApplyEnabledAnchors, HasCustomAnchor)
 Addon:RegisterEvent("UI_SCALE_CHANGED", ApplyEnabledAnchors, HasCustomAnchor)
@@ -306,5 +305,4 @@ Addon:RegisterEvent("ADDON_LOADED", function(_, loadedAddon)
     if loadedAddon == "Blizzard_UIPanels_Game" and Addon:GetSetting("showGroupLootAnchor") then
         ApplyGroupAnchor(true)
     end
-end)
-
+end, function(db) return db.showGroupLootAnchor end)
