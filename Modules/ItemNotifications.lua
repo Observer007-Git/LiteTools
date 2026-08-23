@@ -6,14 +6,12 @@ local DEFAULT_DURATION = 5
 local ROW_GAP = 4
 local FADE_DURATION = 0.35
 local MAX_ROWS = 20
-local ROW_BACKGROUND_ATLAS = "housing-basic-panel-footer"
 local ROW_HEIGHT = 44
 local CONTENT_LEFT = 14
 local CONTENT_RIGHT = 14
 local ICON_GAP = 8
 local COLUMN_GAP = 4
 local ICON_TEXT_GAP = 2
-local SEGMENT_INSET = 5
 local MAX_ITEM_NAME_CHARS = 10
 local ITEM_LINK_PATTERNS = {
     "|c%x+|Hitem:[^|]+|h%[[^%]]+%]|h|r",
@@ -281,10 +279,6 @@ UpdateRowLayout = function(row, columns)
     row.vendorIcon:ClearAllPoints()
     row.auctionIconRing:ClearAllPoints()
     row.auctionIcon:ClearAllPoints()
-    row.nameSegment:ClearAllPoints()
-    row.bagSegment:ClearAllPoints()
-    row.vendorSegment:ClearAllPoints()
-    row.auctionSegment:ClearAllPoints()
 
     local bagLeft = contentLeft + columns.nameCount + COLUMN_GAP
     row.bagIconRing:SetSize(ringSize, ringSize)
@@ -303,71 +297,6 @@ UpdateRowLayout = function(row, columns)
     local auctionLeft = vendorLeft + columns.vendor
     if columns.auction > 0 then
         auctionLeft = auctionLeft + COLUMN_GAP
-    end
-
-    row.nameSegment:SetPoint(
-        "TOPLEFT",
-        row,
-        "TOPLEFT",
-        SEGMENT_INSET,
-        -SEGMENT_INSET
-    )
-    row.nameSegment:SetPoint(
-        "BOTTOMRIGHT",
-        row,
-        "BOTTOMLEFT",
-        bagLeft - COLUMN_GAP / 2,
-        SEGMENT_INSET
-    )
-    row.bagSegment:SetPoint(
-        "TOPLEFT",
-        row,
-        "TOPLEFT",
-        bagLeft - COLUMN_GAP / 2,
-        -SEGMENT_INSET
-    )
-    row.bagSegment:SetPoint(
-        "BOTTOMRIGHT",
-        row,
-        "BOTTOMLEFT",
-        bagLeft + columns.bag + COLUMN_GAP / 2,
-        SEGMENT_INSET
-    )
-    row.vendorSegment:SetShown(row.sellPrice ~= nil and columns.vendor > 0)
-    if columns.vendor > 0 then
-        row.vendorSegment:SetPoint(
-            "TOPLEFT",
-            row,
-            "TOPLEFT",
-            vendorLeft - COLUMN_GAP / 2,
-            -SEGMENT_INSET
-        )
-        row.vendorSegment:SetPoint(
-            "BOTTOMRIGHT",
-            row,
-            "BOTTOMLEFT",
-            vendorLeft + columns.vendor + COLUMN_GAP / 2,
-            SEGMENT_INSET
-        )
-    end
-    row.auctionSegment:SetShown(
-        row.auctionCachedPrice ~= nil and columns.auction > 0
-    )
-    if columns.auction > 0 then
-        row.auctionSegment:SetPoint(
-            "TOPLEFT",
-            row,
-            "TOPLEFT",
-            auctionLeft - COLUMN_GAP / 2,
-            -SEGMENT_INSET
-        )
-        row.auctionSegment:SetPoint(
-            "BOTTOMRIGHT",
-            row,
-            "BOTTOMLEFT",
-            auctionLeft + columns.auction + COLUMN_GAP / 2,
-            SEGMENT_INSET
-        )
     end
 
     if row.moneyAmount then
@@ -448,36 +377,6 @@ local function CreateRow()
     local row = CreateFrame("Frame", nil, container)
     row:SetSize(1, ROW_HEIGHT)
     row:SetAlpha(Addon:GetSetting("itemNotificationOpacity") / 100)
-
-    local background = row:CreateTexture(nil, "BACKGROUND")
-    background:SetAtlas(ROW_BACKGROUND_ATLAS, false)
-    background:SetAllPoints()
-    background:SetAlpha(0.72)
-    row.background = background
-
-    local shade = row:CreateTexture(nil, "BACKGROUND", nil, 1)
-    shade:SetColorTexture(0.015, 0.012, 0.01, 0.32)
-    shade:SetPoint("TOPLEFT", 5, -5)
-    shade:SetPoint("BOTTOMRIGHT", -5, 5)
-    row.shade = shade
-
-    local nameSegment = row:CreateTexture(nil, "BACKGROUND", nil, 2)
-    nameSegment:SetColorTexture(1, 1, 1, 0.18)
-    row.nameSegment = nameSegment
-
-    local bagSegment = row:CreateTexture(nil, "BACKGROUND", nil, 2)
-    bagSegment:SetColorTexture(0.03, 0.34, 0.72, 0.42)
-    row.bagSegment = bagSegment
-
-    local vendorSegment = row:CreateTexture(nil, "BACKGROUND", nil, 2)
-    vendorSegment:SetColorTexture(0.76, 0.24, 0.02, 0.42)
-    vendorSegment:Hide()
-    row.vendorSegment = vendorSegment
-
-    local auctionSegment = row:CreateTexture(nil, "BACKGROUND", nil, 2)
-    auctionSegment:SetColorTexture(0.48, 0.04, 0.70, 0.42)
-    auctionSegment:Hide()
-    row.auctionSegment = auctionSegment
 
     local accent = row:CreateTexture(nil, "BORDER")
     accent:SetPoint("TOPLEFT", 6, -7)
@@ -758,13 +657,6 @@ local function SetRowData(
         accentBlue = bgColor[3] or accentBlue
     end
     row.accent:SetColorTexture(accentRed, accentGreen, accentBlue, 0.9)
-    row.nameSegment:SetColorTexture(
-        accentRed,
-        accentGreen,
-        accentBlue,
-        0.18
-    )
-
     row.name:SetTextColor(red, green, blue, 1)
     row.count:SetTextColor(red, green, blue, 1)
     row.bagCount:SetTextColor(red, green, blue, 1)

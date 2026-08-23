@@ -18,6 +18,7 @@ Modules/Minimap.lua
 Modules/WorldMap.lua
 Modules/Bags.lua
 Modules/ActionBars.lua
+Modules/MouseTooltip.lua
 Modules/Alerts.lua
 Modules/AutoRoll.lua
 Modules/CombatAlert.lua

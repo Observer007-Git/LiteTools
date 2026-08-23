@@ -22,13 +22,32 @@ local PANEL_SEAM_OVERLAP = 4
 -- Replace the texture or atlas values here to customize the gold-ring icons
 -- shown beside each category in the left navigation panel.
 local CATEGORY_ICON_CONFIG = {
-    General = { texture = "Interface\\Icons\\INV_Misc_Gear_01" },
-    StatusBars = { texture = "Interface\\Icons\\INV_Misc_Bandage_01" },
-    Minimap = { texture = "Interface\\Icons\\INV_Misc_Map_01" },
-    WorldMap = { texture = "Interface\\Icons\\INV_Misc_Map02" },
-    MerchantBags = { texture = "Interface\\Icons\\INV_Misc_Bag_10" },
-    AlertsLoot = { texture = "Interface\\Icons\\INV_Misc_Bell_01" },
-    ActionBars = { texture = "Interface\\Icons\\INV_Misc_Key_03" },
+    General = {
+        atlas = "GM-icon-settings-hover",
+        texture = "Interface\\Icons\\INV_Misc_Gear_01",
+        size = 116,
+        offsetX = -2,
+        offsetY = -3,
+    },
+    WorldMap = {
+        texture = "Interface\\QuestFrame\\UI-QuestLog-BookIcon",
+        texCoord = { 0.04, 0.96, 0.04, 0.96 },
+        size = 88,
+    },
+    MouseTooltip = {
+        texture = "Interface\\Icons\\Ability_Hunter_FocusedAim",
+        size = 88,
+    },
+    MerchantBags = {
+        atlas = "Crosshair_lootall_64",
+        texture = "Interface\\Icons\\INV_Misc_Bag_10",
+        size = 88,
+    },
+    AlertsLoot = {
+        atlas = "BonusLoot-Chest",
+        texture = "Interface\\Icons\\INV_Misc_Dice_02",
+        size = 96,
+    },
 }
 Addon.SettingsCategoryIconConfig = CATEGORY_ICON_CONFIG
 
@@ -82,7 +101,7 @@ local function CreateSettingsPage(parent, key, titleText, contentHeight)
         "UIPanelScrollFrameTemplate"
     )
     scrollFrame:SetPoint("TOPLEFT", 4, -62)
-    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 14)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 34)
     scrollFrame:Hide()
 
     local content = CreateFrame(
@@ -204,16 +223,23 @@ local function CreateNavigationButton(parent, key, labelText, top)
     ring:SetSize(95, 96)
     button.Ring = ring
 
+    local iconConfig = CATEGORY_ICON_CONFIG[key] or {}
     local icon = button:CreateTexture(nil, "ARTWORK", nil, 1)
-    icon:SetPoint("CENTER", ring)
-    icon:SetSize(66, 66)
-    SetCategoryIcon(icon, CATEGORY_ICON_CONFIG[key])
+    icon:SetPoint(
+        "CENTER",
+        ring,
+        iconConfig.offsetX or 0,
+        iconConfig.offsetY or 0
+    )
+    local iconSize = iconConfig.size or 88
+    icon:SetSize(iconSize, iconSize)
+    SetCategoryIcon(icon, iconConfig)
     button.Icon = icon
 
     local mask = button:CreateMaskTexture()
     mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
-    mask:SetPoint("TOPLEFT", icon, 2, -2)
-    mask:SetPoint("BOTTOMRIGHT", icon, -2, 2)
+    mask:SetPoint("CENTER", ring)
+    mask:SetSize(72, 72)
     icon:AddMaskTexture(mask)
     button.IconMask = mask
 
@@ -350,42 +376,89 @@ local function PopulateSettingsPages(pageContent)
     UI.CreateCheckButton(content, "LiteToolsInstanceProgressCheck", L.INSTANCE_PROGRESS,
         "showInstanceProgress", left, -150)
 
-    content = pageContent.StatusBars
+    UI.CreateSectionTitle(content, L.SECTION_STATUS_BARS, -202)
     UI.CreateCheckButton(content, "LiteToolsHideExperienceBarCheck",
-        L.HIDE_EXPERIENCE_BAR, "hideExperienceBar", left, -40)
+        L.HIDE_EXPERIENCE_BAR, "hideExperienceBar", left, -244)
     UI.CreateSlider(content, "LiteToolsExperienceWidthSlider", L.EXPERIENCE_BAR_WIDTH,
-        "experienceBarWidth", right, -24, 200, 1200, L.PIXELS)
+        "experienceBarWidth", right, -228, 200, 1200, L.PIXELS)
     UI.CreateCheckButton(content, "LiteToolsHideReputationBarCheck",
-        L.HIDE_REPUTATION_BAR, "hideReputationBar", left, -108)
+        L.HIDE_REPUTATION_BAR, "hideReputationBar", left, -312)
     UI.CreateSlider(content, "LiteToolsReputationWidthSlider", L.REPUTATION_BAR_WIDTH,
-        "reputationBarWidth", right, -92, 200, 1200, L.PIXELS)
+        "reputationBarWidth", right, -296, 200, 1200, L.PIXELS)
     UI.CreateCheckButton(content, "LiteToolsHideHonorBarCheck", L.HIDE_HONOR_BAR,
-        "hideHonorBar", left, -176)
+        "hideHonorBar", left, -380)
     UI.CreateSlider(content, "LiteToolsHonorWidthSlider", L.HONOR_BAR_WIDTH,
-        "honorBarWidth", right, -160, 200, 1200, L.PIXELS)
+        "honorBarWidth", right, -364, 200, 1200, L.PIXELS)
 
-    content = pageContent.Minimap
-    UI.CreateCheckButton(content, "LiteToolsMinimapBorderCheck",
-        L.REPLACE_MINIMAP_BORDER, "replaceMinimapBorder", left, -24)
-    UI.CreateMinimapBorderColorButton(content, right, -24)
-    UI.CreateCheckButton(content, "LiteToolsMinimapMoveCheck", L.MOVE_MINIMAP,
-        "moveableMinimap", left, -66)
-    UI.CreateCheckButton(content, "LiteToolsMinimapLockCheck", L.LOCK_MINIMAP,
-        "minimapPositionLocked", right, -66)
-    UI.CreateCheckButton(content, "LiteToolsMinimapHideBorderCheck",
-        L.HIDE_MINIMAP_BORDER, "hideMinimapBorder", left, -108)
-    UI.CreateSlider(content, "LiteToolsMinimapHeaderScaleSlider",
-        L.MINIMAP_HEADER_SCALE, "minimapHeaderScale", left, -150,
-        50, 200, L.PERCENT)
+    UI.CreateSectionTitle(content, L.SECTION_ACTION_BARS, -436)
+    UI.CreateCheckButton(content,
+        "LiteToolsActionBarHotkeyAliasesCheck", L.ACTION_BAR_ALIASES,
+        "customActionBarHotkeyAliases", left, -478)
 
     content = pageContent.WorldMap
+    UI.CreateSectionTitle(content, L.SECTION_MINIMAP, -20)
+    UI.CreateCheckButton(content, "LiteToolsMinimapBorderCheck",
+        L.REPLACE_MINIMAP_BORDER, "replaceMinimapBorder", left, -42)
+    UI.CreateMinimapBorderColorButton(content, right, -42)
+    UI.CreateCheckButton(content, "LiteToolsMinimapMoveCheck", L.MOVE_MINIMAP,
+        "moveableMinimap", left, -84)
+    UI.CreateCheckButton(content, "LiteToolsMinimapLockCheck", L.LOCK_MINIMAP,
+        "minimapPositionLocked", right, -84)
+    UI.CreateCheckButton(content, "LiteToolsMinimapHideBorderCheck",
+        L.HIDE_MINIMAP_BORDER, "hideMinimapBorder", left, -126)
+    UI.CreateSlider(content, "LiteToolsMinimapHeaderScaleSlider",
+        L.MINIMAP_HEADER_SCALE, "minimapHeaderScale", left, -168,
+        50, 200, L.PERCENT)
+
+    UI.CreateSectionTitle(content, L.SECTION_WORLD_MAP, -230)
     UI.CreateCheckButton(content, "LiteToolsWorldMapResizeCheck",
-        L.WORLD_MAP_RESIZE, "enableWorldMapResize", left, -24)
+        L.WORLD_MAP_RESIZE, "enableWorldMapResize", left, -252)
     UI.CreateCheckButton(content, "LiteToolsCollapseQuestCategoriesCheck",
         L.COLLAPSE_QUEST_CATEGORIES, "showCollapseQuestCategoriesButton",
-        left, -66)
+        left, -294)
     UI.CreateCheckButton(content, "LiteToolsWorldMapDirectionLineCheck",
-        L.WORLD_MAP_DIRECTION_LINE, "enableWorldMapDirectionLine", left, -108)
+        L.WORLD_MAP_DIRECTION_LINE, "enableWorldMapDirectionLine", left, -336)
+
+    content = pageContent.MouseTooltip
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipFollowCheck",
+        L.MOUSE_TOOLTIP_FOLLOW, "enableMouseTooltipFollow", left, -24)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipItemLevelCheck",
+        L.MOUSE_TOOLTIP_ITEM_LEVEL, "showMouseTooltipItemLevel", left, -66)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipPvpItemLevelCheck",
+        L.MOUSE_TOOLTIP_PVP_ITEM_LEVEL, "showMouseTooltipPvpItemLevel",
+        left, -108)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipClassColorCheck",
+        L.MOUSE_TOOLTIP_CLASS_COLOR, "showMouseTooltipClassColor", left, -150)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipSpecializationCheck",
+        L.MOUSE_TOOLTIP_SPECIALIZATION, "showMouseTooltipSpecialization",
+        left, -192)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipHealthCheck",
+        L.MOUSE_TOOLTIP_HEALTH, "showMouseTooltipHealth", left, -234)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipMythicRatingCheck",
+        L.MOUSE_TOOLTIP_MYTHIC_RATING, "showMouseTooltipMythicRating",
+        left, -276)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipFactionIconCheck",
+        L.MOUSE_TOOLTIP_FACTION_ICON, "showMouseTooltipFactionIcon",
+        left, -318)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipMountCheck",
+        L.MOUSE_TOOLTIP_MOUNT, "showMouseTooltipMount", left, -360)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipMountSourceCheck",
+        L.MOUSE_TOOLTIP_MOUNT_SOURCE, "showMouseTooltipMountSource",
+        left, -402)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipTargetOfTargetCheck",
+        L.MOUSE_TOOLTIP_TARGET_OF_TARGET, "showMouseTooltipTargetOfTarget",
+        left, -444)
+    UI.CreateDropdown(content, "LiteToolsMouseTooltipAnchorDropdown",
+        L.MOUSE_TOOLTIP_ANCHOR, "mouseTooltipAnchor", {
+            { text = L.MOUSE_TOOLTIP_ANCHOR_TOP, value = "TOP" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_BOTTOM, value = "BOTTOM" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_LEFT, value = "LEFT" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_RIGHT, value = "RIGHT" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_TOP_LEFT, value = "TOPLEFT" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_BOTTOM_LEFT, value = "BOTTOMLEFT" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_TOP_RIGHT, value = "TOPRIGHT" },
+            { text = L.MOUSE_TOOLTIP_ANCHOR_BOTTOM_RIGHT, value = "BOTTOMRIGHT" },
+        }, left, -486, 180)
 
     content = pageContent.MerchantBags
     UI.CreateCheckButton(content, "LiteToolsAutoSellJunkCheck", L.AUTO_SELL_JUNK,
@@ -400,10 +473,6 @@ local function PopulateSettingsPages(pageContent)
     CreateAutoRollSettings(pageContent.AlertsLoot, left)
     CreateCombatAlertSettings(pageContent.AlertsLoot, left)
     CreateItemNotificationSettings(pageContent.AlertsLoot, left)
-
-    UI.CreateCheckButton(pageContent.ActionBars,
-        "LiteToolsActionBarHotkeyAliasesCheck", L.ACTION_BAR_ALIASES,
-        "customActionBarHotkeyAliases", left, -24)
 
 end
 
@@ -694,13 +763,11 @@ local function CreateStandaloneSettingsWindow()
     end)
 
     local moduleDefinitions = {
-        { key = "General", text = L.SECTION_GENERAL, height = 420 },
-        { key = "StatusBars", text = L.SECTION_STATUS_BARS, height = 450 },
-        { key = "Minimap", text = L.SECTION_MINIMAP, height = 420 },
-        { key = "WorldMap", text = L.SECTION_WORLD_MAP, height = 320 },
+        { key = "General", text = L.SECTION_GENERAL, height = 560 },
+        { key = "WorldMap", text = L.SECTION_WORLD_MAP, height = 460 },
+        { key = "MouseTooltip", text = L.SECTION_MOUSE_TOOLTIP, height = 660 },
         { key = "MerchantBags", text = L.SECTION_MERCHANT_BAGS, height = 360 },
         { key = "AlertsLoot", text = L.SECTION_ALERTS_LOOT, height = 1496 },
-        { key = "ActionBars", text = L.SECTION_ACTION_BARS, height = 320 },
     }
 
     local moduleCount = #moduleDefinitions
