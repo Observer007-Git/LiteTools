@@ -213,6 +213,10 @@ end
 local function GetMacroScopeAndRange()
     local tabID = PanelTemplates_GetSelectedTab(MacroFrame)
     local numAccountMacros, numCharacterMacros = GetNumMacros()
+    local macroBase = MacroFrame and MacroFrame.macroBase
+    if type(macroBase) ~= "number" then
+        macroBase = tabID == 1 and 0 or nil
+    end
     if tabID == 2 then
         local playerName, realmName = UnitFullName("player")
         local scope = table.concat({
@@ -220,9 +224,9 @@ local function GetMacroScopeAndRange()
             realmName or GetRealmName() or "",
             playerName or UnitName("player") or "",
         }, ":")
-        return scope, MAX_ACCOUNT_MACROS, numCharacterMacros
+        return scope, macroBase, numCharacterMacros
     end
-    return "account", 0, numAccountMacros
+    return "account", macroBase, numAccountMacros
 end
 
 local function RebuildMacroOrder()
@@ -233,6 +237,9 @@ local function RebuildMacroOrder()
     end
 
     local scope, macroBase, macroCount = GetMacroScopeAndRange()
+    if type(macroBase) ~= "number" or type(macroCount) ~= "number" then
+        return
+    end
     local storage = Addon:GetSetting("macroOrder")
     if type(storage) ~= "table" then return end
 
@@ -412,7 +419,9 @@ local function InstallMacroCreationHooks()
             end
 
             if not nativeIndex then return end
-            local actualIndex = MacroFrame.macroBase + nativeIndex
+            local _, macroBase = GetMacroScopeAndRange()
+            if type(macroBase) ~= "number" then return end
+            local actualIndex = macroBase + nativeIndex
             MacroFrame:Update()
             if originalDisplayIndex then
                 PreserveEditedMacroPosition(actualIndex, originalDisplayIndex)

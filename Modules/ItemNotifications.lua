@@ -99,7 +99,7 @@ end
 
 local function CoinIcon(atlas, size)
     local textSize = size or 12
-    local coinSize = math.max(4, math.floor(textSize * 0.375 + 0.5))
+    local coinSize = math.max(4, math.floor(textSize * 0.35 + 0.5))
     return AtlasIcon(atlas, coinSize)
 end
 
@@ -293,6 +293,14 @@ local function ApplyFontSize(fontString, size)
     end
 end
 
+local function ApplyOwnedCountFontSize(fontString, nameSize)
+    local font = fontString:GetFont()
+    if font then
+        local size = math.max(4, math.floor(nameSize * 0.75 + 0.5))
+        fontString:SetFont(font, size, "OUTLINE")
+    end
+end
+
 local function CreateRingedAtlasIcon(parent, atlas)
     local ring = parent:CreateTexture(nil, "ARTWORK", nil, 1)
     ring:SetAtlas("bluemenu-Ring", false)
@@ -310,12 +318,11 @@ end
 
 UpdateRowLayout = function(row, columns)
     local nameSize = Addon:GetSetting("itemNotificationNameFontSize") or 14
-    local iconSize = nameSize + 4
-    local ringSize = iconSize + 8
+    local iconSize = nameSize + 8
+    local ringSize = iconSize + 12
     local contentLeft = CONTENT_LEFT + ringSize + ICON_GAP
     columns = columns or {
         nameCount = 0,
-        bag = 0,
         vendor = 0,
         auction = 0,
         rowWidth = CONTENT_LEFT + ringSize + ICON_GAP + CONTENT_RIGHT,
@@ -335,8 +342,6 @@ UpdateRowLayout = function(row, columns)
     row.bagCount:ClearAllPoints()
     row.vendorPrice:ClearAllPoints()
     row.auctionPrice:ClearAllPoints()
-    row.bagIconRing:ClearAllPoints()
-    row.bagIcon:ClearAllPoints()
     row.vendorIconRing:ClearAllPoints()
     row.vendorIcon:ClearAllPoints()
     row.auctionIconRing:ClearAllPoints()
@@ -349,31 +354,18 @@ UpdateRowLayout = function(row, columns)
         "LEFT",
         row.name,
         "RIGHT",
-        row.moneyAmount and COLUMN_GAP or 0,
+        0,
         0
+    )
+    row.bagCount:SetPoint(
+        "BOTTOMRIGHT",
+        row.textIcon,
+        "BOTTOMRIGHT",
+        2,
+        -2
     )
 
     local nextLeft = contentLeft + columns.nameCount
-    if columns.bag > 0 then
-        nextLeft = nextLeft + COLUMN_GAP
-        row.bagIconRing:SetSize(ringSize, ringSize)
-        row.bagIconRing:SetPoint("LEFT", row, "LEFT", nextLeft, 0)
-        row.bagIcon:SetSize(iconSize, iconSize)
-        row.bagIcon:SetPoint("CENTER", row.bagIconRing)
-        row.bagCount:SetPoint(
-            "LEFT",
-            row.bagIconRing,
-            "RIGHT",
-            ICON_TEXT_GAP,
-            0
-        )
-        row.bagCount:SetWidth(math.max(
-            1,
-            columns.bag - ringSize - ICON_TEXT_GAP
-        ))
-        nextLeft = nextLeft + columns.bag
-    end
-
     if columns.vendor > 0 then
         nextLeft = nextLeft + COLUMN_GAP
         row.vendorIconRing:SetSize(ringSize, ringSize)
@@ -461,13 +453,6 @@ local function CreateRow()
     textIcon:AddMaskTexture(iconMask)
     row.iconMask = iconMask
 
-    local bagIconRing, bagIcon, bagIconMask = CreateRingedAtlasIcon(row, "bag-main")
-    bagIconRing:Hide()
-    bagIcon:Hide()
-    row.bagIconRing = bagIconRing
-    row.bagIcon = bagIcon
-    row.bagIconMask = bagIconMask
-
     local vendorIconRing, vendorIcon, vendorIconMask = CreateRingedAtlasIcon(
         row,
         "SpellIcon-256x256-SellJunk"
@@ -507,14 +492,16 @@ local function CreateRow()
     row.count = count
 
     local bagCount = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    bagCount:SetJustifyH("LEFT")
-    bagCount:SetJustifyV("MIDDLE")
+    bagCount:SetJustifyH("RIGHT")
+    bagCount:SetJustifyV("BOTTOM")
     bagCount:SetTextColor(1, 1, 1, 1)
     bagCount:SetWordWrap(false)
     bagCount:SetMaxLines(1)
-    ApplyFontSize(
+    bagCount:SetShadowColor(0, 0, 0, 1)
+    bagCount:SetShadowOffset(1, -1)
+    ApplyOwnedCountFontSize(
         bagCount,
-        Addon:GetSetting("itemNotificationCountFontSize") or 14
+        Addon:GetSetting("itemNotificationNameFontSize") or 14
     )
     row.bagCount = bagCount
 
@@ -586,17 +573,12 @@ local function RefreshRowText(row)
     local countSize = Addon:GetSetting("itemNotificationCountFontSize") or 14
     local showOwnedCount = Addon:GetSetting(
         "showItemNotificationOwnedCount"
-    ) and row.ownedCount ~= nil
+    ) and row.ownedCount ~= nil and row.textIcon:IsShown()
     if row.moneyAmount then
-        row.name:SetText(row.displayName)
+        row.name:SetText("")
         row.count:SetText(FormatMoneyAmount(row.moneyAmount, countSize))
-        row.bagCount:SetText(FormatMoneyAmount(
-            row.ownedCount or row.moneyAmount,
-            countSize
-        ))
-        row.bagCount:SetShown(showOwnedCount)
-        row.bagIconRing:SetShown(showOwnedCount)
-        row.bagIcon:SetShown(showOwnedCount)
+        row.bagCount:SetText("")
+        row.bagCount:Hide()
         row.vendorPrice:SetText("")
         row.auctionPrice:SetText("")
         row.vendorPrice:Hide()
@@ -609,13 +591,11 @@ local function RefreshRowText(row)
     end
 
     row.name:SetText(TruncateItemName(row.displayName))
-    row.count:SetText("×" .. FormatCompactCount(row.gainedCount or 1))
+    row.count:SetText(" +" .. FormatCompactCount(row.gainedCount or 1))
     row.bagCount:SetText(FormatCompactCount(
         row.ownedCount or row.gainedCount or 1
     ))
     row.bagCount:SetShown(showOwnedCount)
-    row.bagIconRing:SetShown(showOwnedCount)
-    row.bagIcon:SetShown(showOwnedCount)
 
     local showVendorPrice = Addon:GetSetting(
         "showItemNotificationVendorPrice"
@@ -650,17 +630,14 @@ end
 
 MeasureColumnWidths = function()
     local nameSize = Addon:GetSetting("itemNotificationNameFontSize") or 14
-    local ringSize = nameSize + 12
+    local iconSize = nameSize + 8
+    local ringSize = iconSize + 12
     local columns = {
         nameCount = 0,
-        bag = 0,
         vendor = 0,
         auction = 0,
     }
 
-    local showOwnedCount = Addon:GetSetting(
-        "showItemNotificationOwnedCount"
-    )
     local showVendorPrice = Addon:GetSetting(
         "showItemNotificationVendorPrice"
     )
@@ -668,17 +645,10 @@ MeasureColumnWidths = function()
         "showItemNotificationAuctionPrice"
     )
     for _, row in ipairs(rows) do
-        local nameCountGap = row.moneyAmount and COLUMN_GAP or 0
         columns.nameCount = math.max(
             columns.nameCount,
-            GetTextWidth(row.name) + nameCountGap + GetTextWidth(row.count)
+            GetTextWidth(row.name) + GetTextWidth(row.count)
         )
-        if showOwnedCount and row.ownedCount ~= nil then
-            columns.bag = math.max(
-                columns.bag,
-                ringSize + ICON_TEXT_GAP + GetTextWidth(row.bagCount)
-            )
-        end
         if showVendorPrice and row.sellPrice ~= nil then
             columns.vendor = math.max(
                 columns.vendor,
@@ -696,9 +666,6 @@ MeasureColumnWidths = function()
     local contentLeft = CONTENT_LEFT + ringSize + ICON_GAP
     local rowWidth = contentLeft
         + columns.nameCount
-    if columns.bag > 0 then
-        rowWidth = rowWidth + COLUMN_GAP + columns.bag
-    end
     if columns.vendor > 0 then
         rowWidth = rowWidth + COLUMN_GAP + columns.vendor
     end
@@ -958,8 +925,7 @@ local function HandleMoneyMessage(message)
             nil,
             { 1, 0.82, 0 },
             nil,
-            Addon:GetSetting("showItemNotificationOwnedCount")
-                and GetMoney() or nil,
+            nil,
             gained
         )
     end)
@@ -1109,6 +1075,7 @@ Addon:RegisterSetting(
     function(value)
         for _, row in ipairs(rows) do
             ApplyFontSize(row.name, value)
+            ApplyOwnedCountFontSize(row.bagCount, value)
         end
         Relayout()
     end
@@ -1120,7 +1087,6 @@ Addon:RegisterSetting(
     function(value)
         for _, row in ipairs(rows) do
             ApplyFontSize(row.count, value)
-            ApplyFontSize(row.bagCount, value)
             ApplyFontSize(row.vendorPrice, value)
             ApplyFontSize(row.auctionPrice, value)
             RefreshRowText(row)

@@ -6,6 +6,7 @@ local MIN_SCALE = 0.5
 local MAX_SCALE = 2
 local SCREEN_MARGIN = 20
 local DIRECTION_LINE_UPDATE_INTERVAL = 1 / 30
+local DIRECTION_LINE_START_OFFSET = 10
 
 local resizeButton
 local resizeTracker
@@ -211,6 +212,8 @@ local function UpdateDirectionLine()
 
     local directionX = -math.sin(facing)
     local directionY = -math.cos(facing)
+    startX = startX + directionX * DIRECTION_LINE_START_OFFSET
+    startY = startY + directionY * DIRECTION_LINE_START_OFFSET
     local distanceX = math.huge
     local distanceY = math.huge
     if directionX > 0 then
@@ -311,7 +314,7 @@ local function CreateDirectionLine()
         nil,
         6
     )
-    directionLineBackground:SetThickness(4)
+    directionLineBackground:SetThickness(1)
     directionLineBackground:SetColorTexture(0, 0, 0, 0.75)
     directionLine = directionLineFrame:CreateLine(
         nil,
@@ -319,7 +322,7 @@ local function CreateDirectionLine()
         nil,
         7
     )
-    directionLine:SetThickness(2)
+    directionLine:SetThickness(1)
     local _, classFile = UnitClass("player")
     local color = classFile and RAID_CLASS_COLORS
         and RAID_CLASS_COLORS[classFile]
