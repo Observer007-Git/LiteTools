@@ -3,6 +3,9 @@ local L = Addon.L
 
 local CURSOR_GAP = 12
 local INSPECT_RETRY_SECONDS = 3
+local INSPECT_RESULT_CACHE_SECONDS = 60
+local INSPECT_RESULT_CACHE_MAX_ENTRIES = 10
+local MOUNT_SPELL_CACHE_MAX_ENTRIES = 512
 local TOOLTIP_HIDE_DELAY = 0.06
 local INSPECT_PVP_ITEM_LEVEL_CACHE_SECONDS = 30
 local EQUIPPED_ITEM_LEVEL_SLOT_COUNT = 16
@@ -19,6 +22,16 @@ local ANCHOR_POINTS = {
     BOTTOMLEFT = { "TOPRIGHT", "BOTTOMLEFT", -CURSOR_GAP, -CURSOR_GAP },
     TOPRIGHT = { "BOTTOMLEFT", "TOPRIGHT", CURSOR_GAP, CURSOR_GAP },
     BOTTOMRIGHT = { "TOPLEFT", "BOTTOMRIGHT", CURSOR_GAP, -CURSOR_GAP },
+}
+local DETAIL_SETTING_KEYS = {
+    "showMouseTooltipItemLevel",
+    "showMouseTooltipClassColor",
+    "showMouseTooltipSpecialization",
+    "showMouseTooltipHealth",
+    "showMouseTooltipMythicRating",
+    "showMouseTooltipFactionIcon",
+    "showMouseTooltipMount",
+    "showMouseTooltipTargetOfTarget",
 }
 
 local function SanitizeAnchor(value)
@@ -39,18 +52,41 @@ local unitWasUnderMouse = false
 local mouseLostElapsed = 0
 local pendingInspectGUID
 local lastInspectRequest = 0
+local lastInspectRequestGUID
+local inspectEquipmentReadyGUID
 local healthValueText
 local factionIconTexture
 local trackedHealthUnit
 local lastCursorX
 local lastCursorY
 local lastCursorScale
+local applyingTooltipAnchor = false
 local mountSpellCache = {}
+local mountSpellCacheOrder = {}
+local inspectResultCache = {}
+local specializationMetadataCache = {}
 local cachedPvpItemLevelGUID
 local cachedPvpItemLevelRegular
 local cachedPvpItemLevel
 local cachedPvpItemLevelTime = 0
 local pvpItemLevelPattern
+
+local function HasEnabledTooltipDetail()
+    for _, key in ipairs(DETAIL_SETTING_KEYS) do
+        if Addon:GetSetting(key) then return true end
+    end
+    return false
+end
+
+local function CacheMountSpell(spellID, mountID)
+    if mountSpellCache[spellID] ~= nil then return end
+    if #mountSpellCacheOrder >= MOUNT_SPELL_CACHE_MAX_ENTRIES then
+        local expiredSpellID = table.remove(mountSpellCacheOrder, 1)
+        mountSpellCache[expiredSpellID] = nil
+    end
+    mountSpellCache[spellID] = mountID
+    mountSpellCacheOrder[#mountSpellCacheOrder + 1] = spellID
+end
 
 local function ResetTooltipTracking()
     trackedOwner = GameTooltip and GameTooltip:GetOwner() or nil
@@ -103,14 +139,21 @@ local function AnchorGameTooltip()
     local anchor = ANCHOR_POINTS[Addon:GetSetting("mouseTooltipAnchor")]
         or ANCHOR_POINTS.BOTTOMRIGHT
     local point, relativeTo, relativePoint = GameTooltip:GetPoint(1)
+    local anchorType = GameTooltip.GetAnchorType
+        and GameTooltip:GetAnchorType()
     if GameTooltip:GetNumPoints() == 1
         and point == anchor[1]
         and relativeTo == cursorAnchor
         and relativePoint == anchor[2]
+        and (not anchorType or anchorType == "ANCHOR_NONE")
     then
         return
     end
 
+    applyingTooltipAnchor = true
+    if GameTooltip.SetAnchorType then
+        GameTooltip:SetAnchorType("ANCHOR_NONE", 0, 0)
+    end
     GameTooltip:ClearAllPoints()
     GameTooltip:SetPoint(
         anchor[1],
@@ -120,6 +163,29 @@ local function AnchorGameTooltip()
         anchor[4]
     )
     GameTooltip:SetClampedToScreen(true)
+    applyingTooltipAnchor = false
+end
+
+-- UI controls can restore their native owner, anchor type, or point through
+-- UpdateTooltip. Reapply the cursor anchor immediately so the two positions do
+-- not alternate between frames.
+if hooksecurefunc and GameTooltip then
+    local function RestoreCursorAnchor(tooltip)
+        if tooltip ~= GameTooltip
+            or applyingTooltipAnchor
+            or not Addon:GetSetting("enableMouseTooltipFollow")
+            or not tooltip:IsShown()
+        then
+            return
+        end
+        AnchorGameTooltip()
+    end
+
+    for _, methodName in ipairs({ "SetOwner", "SetAnchorType", "SetPoint" }) do
+        if GameTooltip[methodName] then
+            hooksecurefunc(GameTooltip, methodName, RestoreCursorAnchor)
+        end
+    end
 end
 
 local function UpdateCursorAnchor()
@@ -292,6 +358,82 @@ local function GetUnitGUIDSafely(unit)
     return nil
 end
 
+local function GetCachedInspectResult(guid, resultType)
+    if not guid then return nil end
+    local cached = inspectResultCache[guid]
+    local cachedAt = cached and cached[resultType .. "Time"]
+    if not cachedAt
+        or GetTime() - cachedAt >= INSPECT_RESULT_CACHE_SECONDS
+    then
+        if cached then
+            cached[resultType] = nil
+            cached[resultType .. "Time"] = nil
+            if not cached.specialization and not cached.itemLevel then
+                inspectResultCache[guid] = nil
+            end
+        end
+        return nil
+    end
+    return cached[resultType]
+end
+
+local function PruneInspectResultCache(now, incomingGUID)
+    local activeCount = 0
+    local oldestGUID
+    local oldestTime
+    for guid, cached in pairs(inspectResultCache) do
+        if cached.specializationTime
+            and now - cached.specializationTime
+                >= INSPECT_RESULT_CACHE_SECONDS
+        then
+            cached.specialization = nil
+            cached.specializationTime = nil
+        end
+        if cached.itemLevelTime
+            and now - cached.itemLevelTime >= INSPECT_RESULT_CACHE_SECONDS
+        then
+            cached.itemLevel = nil
+            cached.itemLevelTime = nil
+        end
+
+        local latestTime = math.max(
+            cached.specializationTime or 0,
+            cached.itemLevelTime or 0
+        )
+        if latestTime == 0 then
+            inspectResultCache[guid] = nil
+        else
+            activeCount = activeCount + 1
+            if guid ~= incomingGUID
+                and (not oldestTime or latestTime < oldestTime)
+            then
+                oldestGUID = guid
+                oldestTime = latestTime
+            end
+        end
+    end
+
+    if not inspectResultCache[incomingGUID]
+        and activeCount >= INSPECT_RESULT_CACHE_MAX_ENTRIES
+        and oldestGUID
+    then
+        inspectResultCache[oldestGUID] = nil
+    end
+end
+
+local function CacheInspectResult(guid, resultType, result)
+    if not guid or not result then return end
+    local now = GetTime()
+    PruneInspectResultCache(now, guid)
+    local cached = inspectResultCache[guid]
+    if not cached then
+        cached = {}
+        inspectResultCache[guid] = cached
+    end
+    cached[resultType] = result
+    cached[resultType .. "Time"] = now
+end
+
 local function ResolveTooltipHealthUnit(tooltip, tooltipData)
     local unit = GetTooltipUnit(tooltip)
     if unit then return unit end
@@ -402,6 +544,37 @@ local function GetItemLevelAndWeight(itemLink, slot, hasOffHand)
     return itemLevel, weight
 end
 
+local function CalculateInspectItemLevelFromEquipment(unit)
+    local guid = GetUnitGUIDSafely(unit)
+    if not guid or guid ~= inspectEquipmentReadyGUID then return nil end
+
+    local itemLinks = {}
+    for _, slot in ipairs(INSPECT_EQUIPMENT_SLOTS) do
+        local itemLink, linkReadable = GetInventoryItemLinkSafely(unit, slot)
+        if not linkReadable then return nil end
+        itemLinks[slot] = itemLink
+    end
+
+    local totalItemLevel = 0
+    local hasItem = false
+    local hasOffHand = itemLinks[17] ~= nil
+    for _, slot in ipairs(INSPECT_EQUIPMENT_SLOTS) do
+        local itemLink = itemLinks[slot]
+        if itemLink then
+            local itemLevel, weight = GetItemLevelAndWeight(
+                itemLink,
+                slot,
+                hasOffHand
+            )
+            if not itemLevel then return nil end
+            totalItemLevel = totalItemLevel + itemLevel * weight
+            hasItem = true
+        end
+    end
+    if not hasItem then return nil end
+    return totalItemLevel / EQUIPPED_ITEM_LEVEL_SLOT_COUNT
+end
+
 local function CalculateInspectPvpItemLevel(unit, regularItemLevel)
     local guid = GetUnitGUIDSafely(unit)
     local now = GetTime()
@@ -470,12 +643,21 @@ local function GetUnitItemLevels(unit, includePvpItemLevel)
         end
         return nil
     end
+
     local getInspectItemLevel = C_PaperDollInfo
         and C_PaperDollInfo.GetInspectItemLevel
-    if not getInspectItemLevel then return nil end
+    if getInspectItemLevel then
+        local ok, itemLevel = pcall(getInspectItemLevel, unit)
+        if ok and IsAccessibleNumber(itemLevel) and itemLevel > 0 then
+            if includePvpItemLevel then
+                return itemLevel, CalculateInspectPvpItemLevel(unit, itemLevel)
+            end
+            return itemLevel, nil
+        end
+    end
 
-    local ok, itemLevel = pcall(getInspectItemLevel, unit)
-    if ok and IsAccessibleNumber(itemLevel) and itemLevel > 0 then
+    local itemLevel = CalculateInspectItemLevelFromEquipment(unit)
+    if itemLevel then
         if includePvpItemLevel then
             return itemLevel, CalculateInspectPvpItemLevel(unit, itemLevel)
         end
@@ -538,14 +720,18 @@ local function GetUnitSpecialization(unit)
     end
     local getInspectSpecialization = C_SpecializationInfo
         and C_SpecializationInfo.GetInspectSpecialization
+        or GetInspectSpecialization
     if not getInspectSpecialization then return nil end
     local ok, specID = pcall(getInspectSpecialization, unit)
     if not ok or not IsAccessibleNumber(specID) or specID <= 0 then
         return nil
     end
 
+    local getSpecializationInfo = GetSpecializationInfoForSpecID
+        or GetSpecializationInfoByID
+    if not getSpecializationInfo then return nil end
     local infoOK, _, name, _, icon, role = pcall(
-        GetSpecializationInfoByID,
+        getSpecializationInfo,
         specID
     )
     if not infoOK
@@ -560,6 +746,89 @@ local function GetUnitSpecialization(unit)
         IsAccessible(role) and role or nil
 end
 
+local function GetClassSpecializationMetadata(unit)
+    local classOK, _, _, classID = pcall(UnitClass, unit)
+    if not classOK or not IsAccessibleNumber(classID) then return nil end
+
+    local sex
+    if UnitSex then
+        local sexOK, unitSex = pcall(UnitSex, unit)
+        if sexOK and IsAccessibleNumber(unitSex) then
+            sex = unitSex
+        end
+    end
+    local cacheKey = classID .. ":" .. (sex or 0)
+    if specializationMetadataCache[cacheKey] then
+        return specializationMetadataCache[cacheKey]
+    end
+
+    local getCount = C_SpecializationInfo
+        and C_SpecializationInfo.GetNumSpecializationsForClassID
+    if not getCount or not GetSpecializationInfoForClassID then return nil end
+    local countOK, count = pcall(getCount, classID)
+    if not countOK or not IsAccessibleNumber(count) or count <= 0 then
+        return nil
+    end
+
+    local metadata = {}
+    for index = 1, count do
+        local infoOK, specID, name, _, icon, role = pcall(
+            GetSpecializationInfoForClassID,
+            classID,
+            index,
+            sex
+        )
+        if infoOK
+            and IsAccessibleNumber(specID)
+            and IsAccessible(name)
+            and type(name) == "string"
+        then
+            metadata[#metadata + 1] = {
+                specID = specID,
+                specName = name,
+                specIcon = IsAccessible(icon) and icon or nil,
+                role = IsAccessible(role) and role or nil,
+            }
+        end
+    end
+    if #metadata == 0 then return nil end
+    specializationMetadataCache[cacheKey] = metadata
+    return metadata
+end
+
+local function GetTooltipSpecialization(tooltip, unit)
+    local metadata = GetClassSpecializationMetadata(unit)
+    local tooltipName = tooltip:GetName()
+    if not metadata or not tooltipName then return nil end
+
+    local classOK, className = pcall(UnitClass, unit)
+    if not classOK
+        or not IsAccessible(className)
+        or type(className) ~= "string"
+    then
+        className = nil
+    end
+
+    for lineIndex = 2, tooltip:NumLines() do
+        local line = _G[tooltipName .. "TextLeft" .. lineIndex]
+        local text = line and line:GetText()
+        if IsAccessible(text)
+            and type(text) == "string"
+            and (not className or text:find(className, 1, true))
+        then
+            for _, specialization in ipairs(metadata) do
+                if text:find(specialization.specName, 1, true) then
+                    return specialization.specID,
+                        specialization.specName,
+                        specialization.specIcon,
+                        specialization.role
+                end
+            end
+        end
+    end
+    return nil
+end
+
 local function AddSpecializationIcons(tooltip, unit, specName, specIcon, role)
     local roleMarkup = ""
     if ROLE_ATLASES[role] and CreateAtlasMarkup then
@@ -569,7 +838,10 @@ local function AddSpecializationIcons(tooltip, unit, specName, specIcon, role)
 
     local specMarkup = ""
     if IsAccessibleNumber(specIcon) then
-        specMarkup = string.format("|T%d:16:16|t", specIcon)
+        specMarkup = string.format(
+            "|T%d:16:16:0:0:64:64:5:59:5:59|t",
+            specIcon
+        )
     end
     local className
     local classFilename
@@ -747,7 +1019,7 @@ local function GetUnitMountInfo(unit)
             else
                 mountID = false
             end
-            mountSpellCache[spellID] = mountID
+            CacheMountSpell(spellID, mountID)
         end
         if not mountID then return false end
 
@@ -811,7 +1083,7 @@ local function AddMountLine(tooltip, unit)
         end
     end
     local mountMarkup = CreateSimpleTextureMarkup(mountIcon, 14, 14)
-    tooltip:AddLine(statusMarkup .. mountMarkup .. " " .. mountName, 1, 1, 1)
+    local lineText = statusMarkup .. mountMarkup .. " " .. mountName
     if not isCollected and Addon:GetSetting("showMouseTooltipMountSource") then
         local source = GetMountSource(mountID)
         if source then
@@ -819,15 +1091,17 @@ local function AddMountLine(tooltip, unit)
                 :gsub("|c%x%x%x%x%x%x%x%x", "")
                 :gsub("|cn[%w_]+:", "")
                 :gsub("|r", "")
-            tooltip:AddLine(
-                string.format(L.MOUSE_TOOLTIP_MOUNT_SOURCE_FORMAT, source),
-                0.8,
-                0.8,
-                0.8,
-                true
-            )
+                :gsub("|[nN]", " ")
+                :gsub("\\[rn]", " ")
+                :gsub("<[bB][rR]%s*/?>", " ")
+                :gsub("%s+", " ")
+                :gsub("^%s+", "")
+                :gsub("%s+$", "")
+            lineText = lineText
+                .. string.format(L.MOUSE_TOOLTIP_MOUNT_SOURCE_FORMAT, source)
         end
     end
+    tooltip:AddLine(lineText, 1, 1, 1, true)
     tooltip.liteToolsMountLineAdded = true
 end
 
@@ -1111,7 +1385,7 @@ local function RequestInspect(unit)
     local guid = GetUnitGUIDSafely(unit)
     if not guid then return end
     local now = GetTime()
-    if pendingInspectGUID == guid
+    if lastInspectRequestGUID == guid
         and now - lastInspectRequest < INSPECT_RETRY_SECONDS
     then
         return
@@ -1120,12 +1394,14 @@ local function RequestInspect(unit)
     local ok = pcall(NotifyInspect, unit)
     if ok then
         pendingInspectGUID = guid
+        lastInspectRequestGUID = guid
         lastInspectRequest = now
     end
 end
 
 local function AddTargetDetails(tooltip, tooltipData)
     if tooltip ~= GameTooltip then return end
+    if not HasEnabledTooltipDetail() then return end
     local unit = ResolveTooltipHealthUnit(tooltip, tooltipData)
     trackedHealthUnit = unit
     UpdateFactionIcon(tooltip, unit)
@@ -1137,8 +1413,33 @@ local function AddTargetDetails(tooltip, tooltipData)
 
     ApplyClassColor(tooltip, unit)
     local needsInspect = false
+    local isPlayerUnit = SafeUnitTest(UnitIsUnit, unit, "player")
+    local guid = not isPlayerUnit and GetUnitGUIDSafely(unit) or nil
     if Addon:GetSetting("showMouseTooltipSpecialization") then
-        local specID, specName, specIcon, role = GetUnitSpecialization(unit)
+        local cached = GetCachedInspectResult(guid, "specialization")
+        local specID, specName, specIcon, role
+        if cached then
+            specID = cached.specID
+            specName = cached.specName
+            specIcon = cached.specIcon
+            role = cached.role
+        else
+            specID, specName, specIcon, role = GetTooltipSpecialization(
+                tooltip,
+                unit
+            )
+            if not specID then
+                specID, specName, specIcon, role = GetUnitSpecialization(unit)
+            end
+            if specID and guid then
+                CacheInspectResult(guid, "specialization", {
+                    specID = specID,
+                    specName = specName,
+                    specIcon = specIcon,
+                    role = role,
+                })
+            end
+        end
         if specID then
             AddSpecializationIcons(tooltip, unit, specName, specIcon, role)
         else
@@ -1149,14 +1450,29 @@ local function AddTargetDetails(tooltip, tooltipData)
         local showPvpItemLevel = Addon:GetSetting(
             "showMouseTooltipPvpItemLevel"
         )
-        local itemLevel, pvpItemLevel = GetUnitItemLevels(
-            unit,
-            showPvpItemLevel
-        )
+        local cached = GetCachedInspectResult(guid, "itemLevel")
+        local itemLevel, pvpItemLevel
+        if cached and (not showPvpItemLevel or cached.includesPvpItemLevel) then
+            itemLevel = cached.itemLevel
+            pvpItemLevel = cached.pvpItemLevel
+        else
+            itemLevel, pvpItemLevel = GetUnitItemLevels(
+                unit,
+                showPvpItemLevel
+            )
+            if itemLevel and guid then
+                CacheInspectResult(guid, "itemLevel", {
+                    itemLevel = itemLevel,
+                    pvpItemLevel = pvpItemLevel,
+                    includesPvpItemLevel = showPvpItemLevel,
+                })
+            end
+        end
         if itemLevel then
             AddItemLevelLine(tooltip, itemLevel, pvpItemLevel)
         else
-            needsInspect = true
+            RequestInspect(unit)
+            needsInspect = false
         end
     end
     AddMythicRatingLine(tooltip, unit)
@@ -1170,6 +1486,7 @@ end
 
 local function AddObjectHealth(tooltip, tooltipData)
     if tooltip ~= GameTooltip then return end
+    if not Addon:GetSetting("showMouseTooltipHealth") then return end
     local unit = ResolveTooltipHealthUnit(tooltip, tooltipData)
     trackedHealthUnit = unit
     UpdateHealthText(tooltip, unit)
@@ -1294,14 +1611,43 @@ Addon:RegisterSetting(
     ApplyDetailSetting
 )
 Addon:RegisterEvent("INSPECT_READY", function(_, guid)
-    if not IsAccessible(guid) or guid ~= pendingInspectGUID then return end
-    pendingInspectGUID = nil
+    if not IsAccessible(guid) then return end
+    if guid == pendingInspectGUID then
+        pendingInspectGUID = nil
+    end
+    inspectEquipmentReadyGUID = guid
     if not GameTooltip or not GameTooltip:IsShown() then return end
 
     local unit = GetTooltipUnit(GameTooltip)
     if not unit or GetUnitGUIDSafely(unit) ~= guid then return end
+
+    local specializationBefore
+    if Addon:GetSetting("showMouseTooltipSpecialization") then
+        specializationBefore = GetCachedInspectResult(guid, "specialization")
+    end
+    local itemLevelBefore
+    local needsPvpItemLevel = Addon:GetSetting(
+        "showMouseTooltipPvpItemLevel"
+    )
+    if Addon:GetSetting("showMouseTooltipItemLevel") then
+        itemLevelBefore = GetCachedInspectResult(guid, "itemLevel")
+    end
+    local needsSpecialization = not specializationBefore
+        and Addon:GetSetting("showMouseTooltipSpecialization")
+    local needsItemLevel = Addon:GetSetting("showMouseTooltipItemLevel")
+        and (not itemLevelBefore
+            or (needsPvpItemLevel
+                and not itemLevelBefore.includesPvpItemLevel))
+    if not needsSpecialization and not needsItemLevel then return end
+
     AddTargetDetails(GameTooltip)
-    GameTooltip:Show()
+    local specializationAfter = GetCachedInspectResult(guid, "specialization")
+    local itemLevelAfter = GetCachedInspectResult(guid, "itemLevel")
+    local addedInspectData = needsSpecialization and specializationAfter
+        or needsItemLevel and itemLevelAfter
+    if addedInspectData then
+        GameTooltip:Show()
+    end
 end)
 Addon:RegisterEvent("UNIT_HEALTH", function(_, unit)
     if not Addon:GetSetting("showMouseTooltipHealth") then return end

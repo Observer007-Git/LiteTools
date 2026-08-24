@@ -1,4 +1,5 @@
 local _, Addon = ...
+local L = Addon.L
 
 local DEFAULT_OPACITY = 90
 local DEFAULT_SCALE = 100
@@ -13,15 +14,25 @@ local ICON_GAP = 8
 local COLUMN_GAP = 4
 local ICON_TEXT_GAP = 2
 local MAX_ITEM_NAME_CHARS = 10
-local ITEM_LINK_PATTERNS = {
-    "|c%x+|Hitem:[^|]+|h%[[^%]]+%]|h|r",
-    "|Hitem:[^|]+|h%[[^%]]+%]|h|r",
-}
+local ITEM_LINK_PATTERN = "|Hitem:[^|]+|h%[[^%]]+%]|h"
 local CURRENCY_LINK_PATTERN = "|c%x+|Hcurrency:[^|]+|h%[[^%]]+%]|h|r"
+local SELF_ITEM_MESSAGE_FORMAT_NAMES = {
+    "LOOT_ITEM_SELF",
+    "LOOT_ITEM_SELF_MULTIPLE",
+    "LOOT_ITEM_PUSHED_SELF",
+    "LOOT_ITEM_PUSHED_SELF_MULTIPLE",
+    "LOOT_ITEM_CREATED_SELF",
+    "LOOT_ITEM_CREATED_SELF_MULTIPLE",
+    "LOOT_ITEM_REFUND",
+    "LOOT_ITEM_REFUND_MULTIPLE",
+    "LOOT_ITEM_BONUS_ROLL_SELF",
+    "LOOT_ITEM_BONUS_ROLL_SELF_MULTIPLE",
+}
 
 local anchor
 local container
 local rows = {}
+local rowPool = {}
 local Relayout
 local MeasureColumnWidths
 local UpdateRowLayout
@@ -32,6 +43,51 @@ end
 
 local function SanitizeDirection(value)
     return value == "down" and "down" or "up"
+end
+
+local function EscapeLuaPattern(text)
+    return text:gsub("([%%%^%$%(%)%.%[%]%*%+%-%?])", "%%%1")
+end
+
+local function BuildChatFormatPattern(formatText)
+    local parts = { "^" }
+    local cursor = 1
+    while cursor <= #formatText do
+        local formatStart, formatEnd = formatText:find(
+            "%%[%d%$]*[sd]",
+            cursor
+        )
+        if not formatStart then
+            parts[#parts + 1] = EscapeLuaPattern(formatText:sub(cursor))
+            break
+        end
+        parts[#parts + 1] = EscapeLuaPattern(formatText:sub(
+            cursor,
+            formatStart - 1
+        ))
+        parts[#parts + 1] = ".-"
+        cursor = formatEnd + 1
+    end
+    parts[#parts + 1] = "$"
+    return table.concat(parts)
+end
+
+local SELF_ITEM_MESSAGE_PATTERNS = {}
+for _, globalName in ipairs(SELF_ITEM_MESSAGE_FORMAT_NAMES) do
+    local formatText = _G[globalName]
+    if type(formatText) == "string" then
+        SELF_ITEM_MESSAGE_PATTERNS[#SELF_ITEM_MESSAGE_PATTERNS + 1] =
+            BuildChatFormatPattern(formatText)
+    end
+end
+
+local function IsSelfItemMessage(message)
+    if type(message) ~= "string" then return false end
+    for _, pattern in ipairs(SELF_ITEM_MESSAGE_PATTERNS) do
+        local ok, matches = pcall(string.match, message, pattern)
+        if ok and matches then return true end
+    end
+    return false
 end
 
 local function AtlasIcon(atlas, size)
@@ -67,12 +123,12 @@ local function FormatCompactCount(value)
     value = math.max(0, math.floor(tonumber(value) or 0))
     local divisor
     local suffix
-    if value >= 10000 then
+    if value >= 10000 and L.ITEM_COUNT_USE_TEN_THOUSAND then
         divisor = 10000
-        suffix = "万"
+        suffix = L.ITEM_COUNT_TEN_THOUSAND_SUFFIX
     elseif value >= 1000 then
         divisor = 1000
-        suffix = "千"
+        suffix = L.ITEM_COUNT_THOUSAND_SUFFIX
     else
         return tostring(value)
     end
@@ -186,10 +242,15 @@ local function GetLargestMoneyAmount(copper)
 end
 
 local function RemoveRow(row)
+    if row.inPool then return end
+    row.inPool = true
     if row.timer then
         row.timer:Cancel()
         row.timer = nil
     end
+    row.fade:Stop()
+    row.fading = false
+    row.hovered = false
     row:Hide()
     for index, current in ipairs(rows) do
         if current == row then
@@ -197,6 +258,7 @@ local function RemoveRow(row)
             break
         end
     end
+    rowPool[#rowPool + 1] = row
     Relayout()
 end
 
@@ -253,7 +315,7 @@ UpdateRowLayout = function(row, columns)
     local contentLeft = CONTENT_LEFT + ringSize + ICON_GAP
     columns = columns or {
         nameCount = 0,
-        bag = ringSize + ICON_TEXT_GAP,
+        bag = 0,
         vendor = 0,
         auction = 0,
         rowWidth = CONTENT_LEFT + ringSize + ICON_GAP + CONTENT_RIGHT,
@@ -280,77 +342,76 @@ UpdateRowLayout = function(row, columns)
     row.auctionIconRing:ClearAllPoints()
     row.auctionIcon:ClearAllPoints()
 
-    local bagLeft = contentLeft + columns.nameCount + COLUMN_GAP
-    row.bagIconRing:SetSize(ringSize, ringSize)
-    row.bagIconRing:SetPoint("LEFT", row, "LEFT", bagLeft, 0)
-    row.bagIcon:SetSize(iconSize, iconSize)
-    row.bagIcon:SetPoint("CENTER", row.bagIconRing)
-    row.bagIconRing:Show()
-    row.bagIcon:Show()
-    row.bagCount:SetPoint("LEFT", row.bagIconRing, "RIGHT", ICON_TEXT_GAP, 0)
-    row.bagCount:SetWidth(math.max(1, columns.bag - ringSize - ICON_TEXT_GAP))
-
-    local vendorLeft = bagLeft + columns.bag
-    if columns.vendor > 0 then
-        vendorLeft = vendorLeft + COLUMN_GAP
-    end
-    local auctionLeft = vendorLeft + columns.vendor
-    if columns.auction > 0 then
-        auctionLeft = auctionLeft + COLUMN_GAP
-    end
-
-    if row.moneyAmount then
-        row.name:Show()
-        row.count:Show()
-        row.bagCount:Show()
-        row.vendorPrice:Hide()
-        row.auctionPrice:Hide()
-        row.vendorIconRing:Hide()
-        row.vendorIcon:Hide()
-        row.auctionIconRing:Hide()
-        row.auctionIcon:Hide()
-        row.name:SetPoint("LEFT", row, "LEFT", contentLeft, 0)
-        row.count:SetPoint("LEFT", row.name, "RIGHT", COLUMN_GAP, 0)
-        return
-    end
-
     row.name:Show()
     row.count:Show()
-    row.bagCount:Show()
     row.name:SetPoint("LEFT", row, "LEFT", contentLeft, 0)
-    row.count:SetPoint("LEFT", row.name, "RIGHT", 0, 0)
-
-    row.vendorIconRing:SetSize(ringSize, ringSize)
-    row.vendorIconRing:SetPoint("LEFT", row, "LEFT", vendorLeft, 0)
-    row.vendorIcon:SetSize(iconSize, iconSize)
-    row.vendorIcon:SetPoint("CENTER", row.vendorIconRing)
-    row.vendorPrice:SetPoint(
+    row.count:SetPoint(
         "LEFT",
-        row.vendorIconRing,
+        row.name,
         "RIGHT",
-        ICON_TEXT_GAP,
+        row.moneyAmount and COLUMN_GAP or 0,
         0
     )
-    row.vendorPrice:SetWidth(math.max(
-        1,
-        columns.vendor - ringSize - ICON_TEXT_GAP
-    ))
 
-    row.auctionIconRing:SetSize(ringSize, ringSize)
-    row.auctionIconRing:SetPoint("LEFT", row, "LEFT", auctionLeft, 0)
-    row.auctionIcon:SetSize(iconSize, iconSize)
-    row.auctionIcon:SetPoint("CENTER", row.auctionIconRing)
-    row.auctionPrice:SetPoint(
-        "LEFT",
-        row.auctionIconRing,
-        "RIGHT",
-        ICON_TEXT_GAP,
-        0
-    )
-    row.auctionPrice:SetWidth(math.max(
-        1,
-        columns.auction - ringSize - ICON_TEXT_GAP
-    ))
+    local nextLeft = contentLeft + columns.nameCount
+    if columns.bag > 0 then
+        nextLeft = nextLeft + COLUMN_GAP
+        row.bagIconRing:SetSize(ringSize, ringSize)
+        row.bagIconRing:SetPoint("LEFT", row, "LEFT", nextLeft, 0)
+        row.bagIcon:SetSize(iconSize, iconSize)
+        row.bagIcon:SetPoint("CENTER", row.bagIconRing)
+        row.bagCount:SetPoint(
+            "LEFT",
+            row.bagIconRing,
+            "RIGHT",
+            ICON_TEXT_GAP,
+            0
+        )
+        row.bagCount:SetWidth(math.max(
+            1,
+            columns.bag - ringSize - ICON_TEXT_GAP
+        ))
+        nextLeft = nextLeft + columns.bag
+    end
+
+    if columns.vendor > 0 then
+        nextLeft = nextLeft + COLUMN_GAP
+        row.vendorIconRing:SetSize(ringSize, ringSize)
+        row.vendorIconRing:SetPoint("LEFT", row, "LEFT", nextLeft, 0)
+        row.vendorIcon:SetSize(iconSize, iconSize)
+        row.vendorIcon:SetPoint("CENTER", row.vendorIconRing)
+        row.vendorPrice:SetPoint(
+            "LEFT",
+            row.vendorIconRing,
+            "RIGHT",
+            ICON_TEXT_GAP,
+            0
+        )
+        row.vendorPrice:SetWidth(math.max(
+            1,
+            columns.vendor - ringSize - ICON_TEXT_GAP
+        ))
+        nextLeft = nextLeft + columns.vendor
+    end
+
+    if columns.auction > 0 then
+        nextLeft = nextLeft + COLUMN_GAP
+        row.auctionIconRing:SetSize(ringSize, ringSize)
+        row.auctionIconRing:SetPoint("LEFT", row, "LEFT", nextLeft, 0)
+        row.auctionIcon:SetSize(iconSize, iconSize)
+        row.auctionIcon:SetPoint("CENTER", row.auctionIconRing)
+        row.auctionPrice:SetPoint(
+            "LEFT",
+            row.auctionIconRing,
+            "RIGHT",
+            ICON_TEXT_GAP,
+            0
+        )
+        row.auctionPrice:SetWidth(math.max(
+            1,
+            columns.auction - ringSize - ICON_TEXT_GAP
+        ))
+    end
 end
 
 local function StartRowFade(row)
@@ -517,11 +578,15 @@ local function CreateRow()
         end)
     end)
 
+    row:Hide()
     return row
 end
 
 local function RefreshRowText(row)
     local countSize = Addon:GetSetting("itemNotificationCountFontSize") or 14
+    local showOwnedCount = Addon:GetSetting(
+        "showItemNotificationOwnedCount"
+    ) and row.ownedCount ~= nil
     if row.moneyAmount then
         row.name:SetText(row.displayName)
         row.count:SetText(FormatMoneyAmount(row.moneyAmount, countSize))
@@ -529,10 +594,17 @@ local function RefreshRowText(row)
             row.ownedCount or row.moneyAmount,
             countSize
         ))
-        row.bagIconRing:Show()
-        row.bagIcon:Show()
+        row.bagCount:SetShown(showOwnedCount)
+        row.bagIconRing:SetShown(showOwnedCount)
+        row.bagIcon:SetShown(showOwnedCount)
         row.vendorPrice:SetText("")
         row.auctionPrice:SetText("")
+        row.vendorPrice:Hide()
+        row.vendorIconRing:Hide()
+        row.vendorIcon:Hide()
+        row.auctionPrice:Hide()
+        row.auctionIconRing:Hide()
+        row.auctionIcon:Hide()
         return
     end
 
@@ -541,11 +613,16 @@ local function RefreshRowText(row)
     row.bagCount:SetText(FormatCompactCount(
         row.ownedCount or row.gainedCount or 1
     ))
-    row.bagIconRing:Show()
-    row.bagIcon:Show()
+    row.bagCount:SetShown(showOwnedCount)
+    row.bagIconRing:SetShown(showOwnedCount)
+    row.bagIcon:SetShown(showOwnedCount)
 
-    local showVendorPrice = row.sellPrice ~= nil
-    local showAuctionPrice = row.auctionCachedPrice ~= nil
+    local showVendorPrice = Addon:GetSetting(
+        "showItemNotificationVendorPrice"
+    ) and row.sellPrice ~= nil
+    local showAuctionPrice = Addon:GetSetting(
+        "showItemNotificationAuctionPrice"
+    ) and row.auctionCachedPrice ~= nil
     row.vendorPrice:SetText(
         showVendorPrice
             and FormatLargestMoney(row.sellPrice, countSize)
@@ -581,23 +658,34 @@ MeasureColumnWidths = function()
         auction = 0,
     }
 
+    local showOwnedCount = Addon:GetSetting(
+        "showItemNotificationOwnedCount"
+    )
+    local showVendorPrice = Addon:GetSetting(
+        "showItemNotificationVendorPrice"
+    )
+    local showAuctionPrice = Addon:GetSetting(
+        "showItemNotificationAuctionPrice"
+    )
     for _, row in ipairs(rows) do
         local nameCountGap = row.moneyAmount and COLUMN_GAP or 0
         columns.nameCount = math.max(
             columns.nameCount,
             GetTextWidth(row.name) + nameCountGap + GetTextWidth(row.count)
         )
-        columns.bag = math.max(
-            columns.bag,
-            ringSize + ICON_TEXT_GAP + GetTextWidth(row.bagCount)
-        )
-        if row.sellPrice ~= nil then
+        if showOwnedCount and row.ownedCount ~= nil then
+            columns.bag = math.max(
+                columns.bag,
+                ringSize + ICON_TEXT_GAP + GetTextWidth(row.bagCount)
+            )
+        end
+        if showVendorPrice and row.sellPrice ~= nil then
             columns.vendor = math.max(
                 columns.vendor,
                 ringSize + ICON_TEXT_GAP + GetTextWidth(row.vendorPrice)
             )
         end
-        if row.auctionCachedPrice ~= nil then
+        if showAuctionPrice and row.auctionCachedPrice ~= nil then
             columns.auction = math.max(
                 columns.auction,
                 ringSize + ICON_TEXT_GAP + GetTextWidth(row.auctionPrice)
@@ -608,8 +696,9 @@ MeasureColumnWidths = function()
     local contentLeft = CONTENT_LEFT + ringSize + ICON_GAP
     local rowWidth = contentLeft
         + columns.nameCount
-        + COLUMN_GAP
-        + columns.bag
+    if columns.bag > 0 then
+        rowWidth = rowWidth + COLUMN_GAP + columns.bag
+    end
     if columns.vendor > 0 then
         rowWidth = rowWidth + COLUMN_GAP + columns.vendor
     end
@@ -686,7 +775,11 @@ local function AddNotification(
         RemoveRow(rows[#rows])
     end
 
-    local row = CreateRow()
+    local row = table.remove(rowPool) or CreateRow()
+    row.inPool = nil
+    row.fading = false
+    row.hovered = false
+    row:SetAlpha(db.itemNotificationOpacity / 100)
     SetRowData(
         row,
         icon,
@@ -701,12 +794,13 @@ local function AddNotification(
     )
     row.nameText = nameText or "?"
     row.tooltipLink = tooltipLink
-    table.insert(rows, 1, row)
-    Relayout()
-
     local total = db.itemNotificationDuration or DEFAULT_DURATION
     row.deadline = GetTime() + total
     row.remaining = total
+    table.insert(rows, 1, row)
+    row:Show()
+    Relayout()
+
     local duration = math.max(0, total - FADE_DURATION)
     row.timer = C_Timer.NewTimer(duration, function()
         row.timer = nil
@@ -737,72 +831,82 @@ local function GetOwnedItemCount(itemLink, fallback)
 end
 
 local function HandleItemMessage(message)
-    for _, pattern in ipairs(ITEM_LINK_PATTERNS) do
-        for link in message:gmatch(pattern) do
-            local linkStart = message:find(link, 1, true)
-            if linkStart then
-                local linkEnd = linkStart + #link - 1
-                local gained = 1
+    if not IsSelfItemMessage(message) then return end
+    local searchStart = 1
+    while true do
+        local linkStart, linkEnd = message:find(ITEM_LINK_PATTERN, searchStart)
+        if not linkStart then break end
+        local link = message:sub(linkStart, linkEnd)
+        searchStart = linkEnd + 1
+        local gained = 1
 
-                local tail = message:sub(linkEnd + 1, linkEnd + 12)
-                local suffixCount = tonumber(tail:match("^%s*[xX×]?%s*(%d+)"))
-                if suffixCount then
-                    gained = suffixCount
-                else
-                    local head = message:sub(math.max(1, linkStart - 12), linkStart - 1)
-                    local prefixCount = tonumber(head:match("(%d+)%s*[xX×]%s*$"))
-                    if prefixCount then
-                        gained = prefixCount
-                    end
-                end
-
-                local name = link:match("%[([^%]]+)%]")
-                local quality
-                local icon
-                local sellPrice
-                if C_Item and C_Item.GetItemInfo then
-                    local result = { pcall(C_Item.GetItemInfo, link) }
-                    if result[1] and result[2] then
-                        name = result[2]
-                        quality = result[4]
-                        icon = result[11]
-                        sellPrice = result[12]
-                    end
-                end
-                if (not name or not icon) and GetItemInfo then
-                    local result = { pcall(GetItemInfo, link) }
-                    if result[1] and result[2] then
-                        name = result[2]
-                        quality = result[4]
-                        if not icon then icon = result[11] end
-                        if sellPrice == nil then sellPrice = result[12] end
-                    end
-                end
-
-                local itemLink = link
-                local itemName = name
-                local itemQuality = quality
-                local itemIcon = icon
-                local itemSellPrice = sellPrice
-                local itemGained = gained
-                C_Timer.After(0, function()
-                    GetAuctionatorPrice(itemLink, function(auctionPrice)
-                        AddNotification(
-                            itemIcon,
-                            itemName,
-                            itemQuality,
-                            itemGained,
-                            itemSellPrice,
-                            nil,
-                            itemLink,
-                            GetOwnedItemCount(itemLink, itemGained),
-                            nil,
-                            auctionPrice
-                        )
-                    end)
-                end)
+        local tail = message:sub(linkEnd + 1, linkEnd + 12)
+        tail = tail:gsub("^|r", "")
+        local suffixCount = tonumber(tail:match("^%s*[xX×]?%s*(%d+)"))
+        if suffixCount then
+            gained = suffixCount
+        else
+            local head = message:sub(math.max(1, linkStart - 12), linkStart - 1)
+            local prefixCount = tonumber(head:match("(%d+)%s*[xX×]%s*$"))
+            if prefixCount then
+                gained = prefixCount
             end
         end
+
+        local name = link:match("%[([^%]]+)%]")
+        local quality
+        local icon
+        local sellPrice
+        if C_Item and C_Item.GetItemInfo then
+            local result = { pcall(C_Item.GetItemInfo, link) }
+            if result[1] and result[2] then
+                name = result[2]
+                quality = result[4]
+                icon = result[11]
+                sellPrice = result[12]
+            end
+        end
+        if (not name or not icon) and GetItemInfo then
+            local result = { pcall(GetItemInfo, link) }
+            if result[1] and result[2] then
+                name = result[2]
+                quality = result[4]
+                if not icon then icon = result[11] end
+                if sellPrice == nil then sellPrice = result[12] end
+            end
+        end
+
+        local itemLink = link
+        local itemName = name
+        local itemQuality = quality
+        local itemIcon = icon
+        local itemSellPrice = sellPrice
+        local itemGained = gained
+        C_Timer.After(0, function()
+            local function FinishNotification(auctionPrice)
+                local ownedCount
+                if Addon:GetSetting("showItemNotificationOwnedCount") then
+                    ownedCount = GetOwnedItemCount(itemLink, itemGained)
+                end
+                AddNotification(
+                    itemIcon,
+                    itemName,
+                    itemQuality,
+                    itemGained,
+                    itemSellPrice,
+                    nil,
+                    itemLink,
+                    ownedCount,
+                    nil,
+                    auctionPrice
+                )
+            end
+            if Addon:GetSetting("showItemNotificationAuctionPrice") then
+                GetAuctionatorPrice(itemLink, FinishNotification)
+            else
+                FinishNotification(nil)
+            end
+        end)
     end
 end
 
@@ -854,7 +958,8 @@ local function HandleMoneyMessage(message)
             nil,
             { 1, 0.82, 0 },
             nil,
-            GetMoney(),
+            Addon:GetSetting("showItemNotificationOwnedCount")
+                and GetMoney() or nil,
             gained
         )
     end)
@@ -885,7 +990,8 @@ local function HandleCurrencyMessage(message)
             nil,
             nil,
             nil,
-            info and info.quantity or gained
+            Addon:GetSetting("showItemNotificationOwnedCount")
+                and info and info.quantity or nil
         )
     end
 end
@@ -948,6 +1054,30 @@ Addon:RegisterSetting("showItemNotifications", false, Addon.BooleanSetting, func
     if value and db then db.itemNotificationAnchorHidden = false end
     ApplyEnabled(true)
 end)
+local function RefreshOptionalColumns()
+    for _, row in ipairs(rows) do
+        RefreshRowText(row)
+    end
+    Relayout()
+end
+Addon:RegisterSetting(
+    "showItemNotificationVendorPrice",
+    false,
+    Addon.BooleanSetting,
+    RefreshOptionalColumns
+)
+Addon:RegisterSetting(
+    "showItemNotificationAuctionPrice",
+    false,
+    Addon.BooleanSetting,
+    RefreshOptionalColumns
+)
+Addon:RegisterSetting(
+    "showItemNotificationOwnedCount",
+    false,
+    Addon.BooleanSetting,
+    RefreshOptionalColumns
+)
 Addon:RegisterSetting(
     "itemNotificationOpacity",
     DEFAULT_OPACITY,

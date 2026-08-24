@@ -19,38 +19,6 @@ local NAVIGATION_BUTTON_HEIGHT = 60
 local PANEL_BACKGROUND_TOP_OVERLAP = 14
 local PANEL_SEAM_OVERLAP = 4
 
--- Replace the texture or atlas values here to customize the gold-ring icons
--- shown beside each category in the left navigation panel.
-local CATEGORY_ICON_CONFIG = {
-    General = {
-        atlas = "GM-icon-settings-hover",
-        texture = "Interface\\Icons\\INV_Misc_Gear_01",
-        size = 116,
-        offsetX = -2,
-        offsetY = -3,
-    },
-    WorldMap = {
-        texture = "Interface\\QuestFrame\\UI-QuestLog-BookIcon",
-        texCoord = { 0.04, 0.96, 0.04, 0.96 },
-        size = 88,
-    },
-    MouseTooltip = {
-        texture = "Interface\\Icons\\Ability_Hunter_FocusedAim",
-        size = 88,
-    },
-    MerchantBags = {
-        atlas = "Crosshair_lootall_64",
-        texture = "Interface\\Icons\\INV_Misc_Bag_10",
-        size = 88,
-    },
-    AlertsLoot = {
-        atlas = "BonusLoot-Chest",
-        texture = "Interface\\Icons\\INV_Misc_Dice_02",
-        size = 96,
-    },
-}
-Addon.SettingsCategoryIconConfig = CATEGORY_ICON_CONFIG
-
 Addon:RegisterSetting(
     "settingsWindowScale",
     1,
@@ -73,24 +41,6 @@ local function CreateHousingTexture(parent, layer, atlas, fallbackColor, subLeve
     local texture = parent:CreateTexture(nil, layer, nil, subLevel)
     SetHousingAtlas(texture, atlas, fallbackColor)
     return texture
-end
-
-local function SetCategoryIcon(texture, config)
-    config = config or {}
-    if config.atlas and C_Texture and C_Texture.GetAtlasInfo
-        and C_Texture.GetAtlasInfo(config.atlas)
-    then
-        texture:SetAtlas(config.atlas, false)
-    else
-        texture:SetTexture(config.texture or 134400)
-        local texCoord = config.texCoord or { 0.08, 0.92, 0.08, 0.92 }
-        texture:SetTexCoord(
-            texCoord[1],
-            texCoord[2],
-            texCoord[3],
-            texCoord[4]
-        )
-    end
 end
 
 local function CreateSettingsPage(parent, key, titleText, contentHeight)
@@ -217,43 +167,21 @@ local function CreateNavigationButton(parent, key, labelText, top)
     highlight:SetAlpha(0.7)
     button:SetHighlightTexture(highlight)
 
-    local ring = button:CreateTexture(nil, "ARTWORK", nil, 2)
-    ring:SetAtlas("bluemenu-Ring", false)
-    ring:SetPoint("LEFT", -15, -1)
-    ring:SetSize(95, 96)
-    button.Ring = ring
-
-    local iconConfig = CATEGORY_ICON_CONFIG[key] or {}
-    local icon = button:CreateTexture(nil, "ARTWORK", nil, 1)
-    icon:SetPoint(
-        "CENTER",
-        ring,
-        iconConfig.offsetX or 0,
-        iconConfig.offsetY or 0
+    local label = button:CreateFontString(
+        nil,
+        "OVERLAY",
+        "GameFontHighlightLarge"
     )
-    local iconSize = iconConfig.size or 88
-    icon:SetSize(iconSize, iconSize)
-    SetCategoryIcon(icon, iconConfig)
-    button.Icon = icon
-
-    local mask = button:CreateMaskTexture()
-    mask:SetTexture("Interface\\CharacterFrame\\TempPortraitAlphaMask")
-    mask:SetPoint("CENTER", ring)
-    mask:SetSize(72, 72)
-    icon:AddMaskTexture(mask)
-    button.IconMask = mask
-
-    local label = button:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    label:SetPoint("LEFT", ring, "RIGHT", -2, 0)
-    label:SetPoint("RIGHT", -12, 0)
-    label:SetJustifyH("LEFT")
+    label:SetAllPoints(button)
+    label:SetJustifyH("CENTER")
+    label:SetJustifyV("MIDDLE")
     label:SetText(labelText)
     button.Label = label
 
     button.SetSelected = function(self, selected)
         self.Selected:SetShown(selected)
-        self.Label:SetFontObject(selected and "GameFontNormalLarge"
-            or "GameFontHighlight")
+        self.Label:SetFontObject(selected and "GameFontNormalHuge"
+            or "GameFontHighlightLarge")
         self.Label:SetTextColor(
             selected and 1 or 0.9,
             selected and 0.82 or 0.78,
@@ -338,28 +266,37 @@ local function CreateItemNotificationSettings(content, left)
     UI.CreateSectionTitle(content, L.ITEM_NOTIFICATIONS, -920)
     UI.CreateCheckButton(content, "LiteToolsItemNotificationsCheck",
         L.ITEM_NOTIFICATIONS, "showItemNotifications", left, -942)
+    UI.CreateCheckButton(content, "LiteToolsItemNotificationVendorPriceCheck",
+        L.ITEM_NOTIFICATION_SHOW_VENDOR_PRICE,
+        "showItemNotificationVendorPrice", left, -976)
+    UI.CreateCheckButton(content, "LiteToolsItemNotificationAuctionPriceCheck",
+        L.ITEM_NOTIFICATION_SHOW_AUCTION_PRICE,
+        "showItemNotificationAuctionPrice", left, -1010)
+    UI.CreateCheckButton(content, "LiteToolsItemNotificationOwnedCountCheck",
+        L.ITEM_NOTIFICATION_SHOW_OWNED_COUNT,
+        "showItemNotificationOwnedCount", left, -1044)
     UI.CreateCheckButton(content, "LiteToolsFastLootCheck",
-        L.FAST_LOOT, "fastLoot", left, -976)
+        L.FAST_LOOT, "fastLoot", left, -1078)
     UI.CreateSlider(content, "LiteToolsItemNotificationOpacitySlider",
-        L.ITEM_NOTIFICATION_OPACITY, "itemNotificationOpacity", left, -1018,
+        L.ITEM_NOTIFICATION_OPACITY, "itemNotificationOpacity", left, -1120,
         30, 100, L.PERCENT)
     UI.CreateSlider(content, "LiteToolsItemNotificationScaleSlider",
-        L.ITEM_NOTIFICATION_SCALE, "itemNotificationScale", left, -1080,
+        L.ITEM_NOTIFICATION_SCALE, "itemNotificationScale", left, -1182,
         50, 200, L.PERCENT)
     UI.CreateSlider(content, "LiteToolsItemNotificationDurationSlider",
-        L.ITEM_NOTIFICATION_DURATION, "itemNotificationDuration", left, -1142,
+        L.ITEM_NOTIFICATION_DURATION, "itemNotificationDuration", left, -1244,
         2, 15, L.SECONDS)
     UI.CreateSlider(content, "LiteToolsItemNotificationNameSizeSlider",
         L.ITEM_NOTIFICATION_NAME_SIZE, "itemNotificationNameFontSize",
-        left, -1204, 8, 28, L.PIXELS)
+        left, -1306, 8, 28, L.PIXELS)
     UI.CreateSlider(content, "LiteToolsItemNotificationCountSizeSlider",
         L.ITEM_NOTIFICATION_COUNT_SIZE, "itemNotificationCountFontSize",
-        left, -1266, 8, 28, L.PIXELS)
+        left, -1368, 8, 28, L.PIXELS)
     UI.CreateDropdown(content, "LiteToolsItemNotificationDirectionDropdown",
         L.ITEM_NOTIFICATION_DIRECTION, "itemNotificationDirection", {
             { text = L.ITEM_NOTIFICATION_DIRECTION_UP, value = "up" },
             { text = L.ITEM_NOTIFICATION_DIRECTION_DOWN, value = "down" },
-        }, left, -1328, 160)
+        }, left, -1430, 160)
 end
 
 local function PopulateSettingsPages(pageContent)
@@ -375,25 +312,27 @@ local function PopulateSettingsPages(pageContent)
         "fixedMicroMenu", left, -108)
     UI.CreateCheckButton(content, "LiteToolsInstanceProgressCheck", L.INSTANCE_PROGRESS,
         "showInstanceProgress", left, -150)
+    UI.CreateCheckButton(content, "LiteToolsExtendMacroUICheck", L.EXTEND_MACRO_UI,
+        "extendMacroUI", left, -192)
 
-    UI.CreateSectionTitle(content, L.SECTION_STATUS_BARS, -202)
+    UI.CreateSectionTitle(content, L.SECTION_STATUS_BARS, -244)
     UI.CreateCheckButton(content, "LiteToolsHideExperienceBarCheck",
-        L.HIDE_EXPERIENCE_BAR, "hideExperienceBar", left, -244)
+        L.HIDE_EXPERIENCE_BAR, "hideExperienceBar", left, -286)
     UI.CreateSlider(content, "LiteToolsExperienceWidthSlider", L.EXPERIENCE_BAR_WIDTH,
-        "experienceBarWidth", right, -228, 200, 1200, L.PIXELS)
+        "experienceBarWidth", right, -270, 200, 1200, L.PIXELS)
     UI.CreateCheckButton(content, "LiteToolsHideReputationBarCheck",
-        L.HIDE_REPUTATION_BAR, "hideReputationBar", left, -312)
+        L.HIDE_REPUTATION_BAR, "hideReputationBar", left, -354)
     UI.CreateSlider(content, "LiteToolsReputationWidthSlider", L.REPUTATION_BAR_WIDTH,
-        "reputationBarWidth", right, -296, 200, 1200, L.PIXELS)
+        "reputationBarWidth", right, -338, 200, 1200, L.PIXELS)
     UI.CreateCheckButton(content, "LiteToolsHideHonorBarCheck", L.HIDE_HONOR_BAR,
-        "hideHonorBar", left, -380)
+        "hideHonorBar", left, -422)
     UI.CreateSlider(content, "LiteToolsHonorWidthSlider", L.HONOR_BAR_WIDTH,
-        "honorBarWidth", right, -364, 200, 1200, L.PIXELS)
+        "honorBarWidth", right, -406, 200, 1200, L.PIXELS)
 
-    UI.CreateSectionTitle(content, L.SECTION_ACTION_BARS, -436)
+    UI.CreateSectionTitle(content, L.SECTION_ACTION_BARS, -478)
     UI.CreateCheckButton(content,
         "LiteToolsActionBarHotkeyAliasesCheck", L.ACTION_BAR_ALIASES,
-        "customActionBarHotkeyAliases", left, -478)
+        "customActionBarHotkeyAliases", left, -520)
 
     content = pageContent.WorldMap
     UI.CreateSectionTitle(content, L.SECTION_MINIMAP, -20)
@@ -767,7 +706,7 @@ local function CreateStandaloneSettingsWindow()
         { key = "WorldMap", text = L.SECTION_WORLD_MAP, height = 460 },
         { key = "MouseTooltip", text = L.SECTION_MOUSE_TOOLTIP, height = 660 },
         { key = "MerchantBags", text = L.SECTION_MERCHANT_BAGS, height = 360 },
-        { key = "AlertsLoot", text = L.SECTION_ALERTS_LOOT, height = 1496 },
+        { key = "AlertsLoot", text = L.SECTION_ALERTS_LOOT, height = 1600 },
     }
 
     local moduleCount = #moduleDefinitions
@@ -775,6 +714,21 @@ local function CreateStandaloneSettingsWindow()
     local scrollBar = navigationScroll.ScrollBar
         or _G[navigationScroll:GetName() .. "ScrollBar"]
     if scrollBar then
+        scrollBar:ClearAllPoints()
+        scrollBar:SetPoint(
+            "TOPRIGHT",
+            navigation,
+            "TOPRIGHT",
+            -5,
+            -NAVIGATION_LIST_TOP_INSET - 14
+        )
+        scrollBar:SetPoint(
+            "BOTTOMRIGHT",
+            navigation,
+            "BOTTOMRIGHT",
+            -5,
+            16
+        )
         scrollBar:SetShown(hasNavigationOverflow)
     end
     navigationScroll:SetPoint(

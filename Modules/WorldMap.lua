@@ -5,6 +5,7 @@ local DEFAULT_HEIGHT = 534
 local MIN_SCALE = 0.5
 local MAX_SCALE = 2
 local SCREEN_MARGIN = 20
+local DIRECTION_LINE_UPDATE_INTERVAL = 1 / 30
 
 local resizeButton
 local resizeTracker
@@ -24,6 +25,7 @@ local resizeStartScale
 local resizeStartDistance
 local resizeTopLeftX
 local resizeTopLeftY
+local directionLineUpdateElapsed = 0
 
 local function DB()
     return Addon:GetDatabase()
@@ -255,6 +257,15 @@ local function UpdateDirectionLine()
     directionLine:Show()
 end
 
+local function OnDirectionLineUpdate(_, elapsed)
+    directionLineUpdateElapsed = directionLineUpdateElapsed + elapsed
+    if directionLineUpdateElapsed < DIRECTION_LINE_UPDATE_INTERVAL then
+        return
+    end
+    directionLineUpdateElapsed = 0
+    UpdateDirectionLine()
+end
+
 local function UpdateDirectionLineVisibility()
     if not directionLineFrame then
         return
@@ -318,7 +329,7 @@ local function CreateDirectionLine()
         color and color.b or 0,
         0.9
     )
-    directionLineFrame:SetScript("OnUpdate", UpdateDirectionLine)
+    directionLineFrame:SetScript("OnUpdate", OnDirectionLineUpdate)
     UpdateDirectionLineVisibility()
     return true
 end
