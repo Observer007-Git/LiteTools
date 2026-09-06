@@ -314,6 +314,8 @@ local function PopulateSettingsPages(pageContent)
         "showInstanceProgress", left, -150)
     UI.CreateCheckButton(content, "LiteToolsExtendMacroUICheck", L.EXTEND_MACRO_UI,
         "extendMacroUI", left, -192)
+    UI.CreateCheckButton(content, "LiteToolsPlatynatorTexturesCheck",
+        L.CUSTOM_PLATYNATOR_TEXTURES, "customPlatynatorTextures", right, -192)
 
     UI.CreateSectionTitle(content, L.SECTION_STATUS_BARS, -244)
     UI.CreateCheckButton(content, "LiteToolsHideExperienceBarCheck",
@@ -387,6 +389,9 @@ local function PopulateSettingsPages(pageContent)
     UI.CreateCheckButton(content, "LiteToolsMouseTooltipTargetOfTargetCheck",
         L.MOUSE_TOOLTIP_TARGET_OF_TARGET, "showMouseTooltipTargetOfTarget",
         left, -444)
+    UI.CreateCheckButton(content, "LiteToolsMouseTooltipCurrentRealmCheck",
+        L.MOUSE_TOOLTIP_CURRENT_REALM, "showMouseTooltipCurrentRealm",
+        left, -486)
     UI.CreateDropdown(content, "LiteToolsMouseTooltipAnchorDropdown",
         L.MOUSE_TOOLTIP_ANCHOR, "mouseTooltipAnchor", {
             { text = L.MOUSE_TOOLTIP_ANCHOR_TOP, value = "TOP" },
@@ -397,7 +402,7 @@ local function PopulateSettingsPages(pageContent)
             { text = L.MOUSE_TOOLTIP_ANCHOR_BOTTOM_LEFT, value = "BOTTOMLEFT" },
             { text = L.MOUSE_TOOLTIP_ANCHOR_TOP_RIGHT, value = "TOPRIGHT" },
             { text = L.MOUSE_TOOLTIP_ANCHOR_BOTTOM_RIGHT, value = "BOTTOMRIGHT" },
-        }, left, -486, 180)
+        }, left, -528, 180)
 
     content = pageContent.MerchantBags
     UI.CreateCheckButton(content, "LiteToolsAutoSellJunkCheck", L.AUTO_SELL_JUNK,

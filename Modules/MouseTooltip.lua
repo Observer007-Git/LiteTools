@@ -32,6 +32,7 @@ local DETAIL_SETTING_KEYS = {
     "showMouseTooltipFactionIcon",
     "showMouseTooltipMount",
     "showMouseTooltipTargetOfTarget",
+    "showMouseTooltipCurrentRealm",
 }
 
 local function SanitizeAnchor(value)
@@ -61,6 +62,7 @@ local lastCursorX
 local lastCursorY
 local lastCursorScale
 local applyingTooltipAnchor = false
+local tooltipAnchorNeedsUpdate = true
 local mountSpellCache = {}
 local mountSpellCacheOrder = {}
 local inspectResultCache = {}
@@ -70,6 +72,7 @@ local cachedPvpItemLevelRegular
 local cachedPvpItemLevel
 local cachedPvpItemLevelTime = 0
 local pvpItemLevelPattern
+local IsAccessible
 
 local function HasEnabledTooltipDetail()
     for _, key in ipairs(DETAIL_SETTING_KEYS) do
@@ -89,14 +92,23 @@ local function CacheMountSpell(spellID, mountID)
 end
 
 local function ResetTooltipTracking()
-    trackedOwner = GameTooltip and GameTooltip:GetOwner() or nil
+    trackedOwner = nil
+    if GameTooltip then
+        local ownerOK, owner = pcall(GameTooltip.GetOwner, GameTooltip)
+        if ownerOK and IsAccessible(owner) then
+            trackedOwner = owner
+        end
+    end
     ownerWasUnderMouse = false
     unitWasUnderMouse = false
     mouseLostElapsed = 0
 end
 
 local function ShouldHideTooltip(elapsed)
-    local owner = GameTooltip:GetOwner()
+    local ownerOK, owner = pcall(GameTooltip.GetOwner, GameTooltip)
+    if not ownerOK or (type(owner) ~= "nil" and not IsAccessible(owner)) then
+        return false
+    end
     if owner ~= trackedOwner then
         trackedOwner = owner
         ownerWasUnderMouse = false
@@ -119,8 +131,11 @@ local function ShouldHideTooltip(elapsed)
     end
 
     if owner.IsMouseOver then
-        local isMouseOver = owner:IsMouseOver()
-        if isMouseOver then
+        local mouseOverOK, isMouseOver = pcall(owner.IsMouseOver, owner)
+        if not mouseOverOK or not IsAccessible(isMouseOver) then
+            return false
+        end
+        if isMouseOver == true then
             ownerWasUnderMouse = true
             mouseLostElapsed = 0
         elseif ownerWasUnderMouse then
@@ -135,21 +150,10 @@ local function AnchorGameTooltip()
     if not Addon:GetSetting("enableMouseTooltipFollow") then return end
     if not GameTooltip or not GameTooltip:IsShown() then return end
     if GameTooltip.IsForbidden and GameTooltip:IsForbidden() then return end
+    if not tooltipAnchorNeedsUpdate then return end
 
     local anchor = ANCHOR_POINTS[Addon:GetSetting("mouseTooltipAnchor")]
         or ANCHOR_POINTS.BOTTOMRIGHT
-    local point, relativeTo, relativePoint = GameTooltip:GetPoint(1)
-    local anchorType = GameTooltip.GetAnchorType
-        and GameTooltip:GetAnchorType()
-    if GameTooltip:GetNumPoints() == 1
-        and point == anchor[1]
-        and relativeTo == cursorAnchor
-        and relativePoint == anchor[2]
-        and (not anchorType or anchorType == "ANCHOR_NONE")
-    then
-        return
-    end
-
     applyingTooltipAnchor = true
     if GameTooltip.SetAnchorType then
         GameTooltip:SetAnchorType("ANCHOR_NONE", 0, 0)
@@ -164,6 +168,7 @@ local function AnchorGameTooltip()
     )
     GameTooltip:SetClampedToScreen(true)
     applyingTooltipAnchor = false
+    tooltipAnchorNeedsUpdate = false
 end
 
 -- UI controls can restore their native owner, anchor type, or point through
@@ -178,6 +183,7 @@ if hooksecurefunc and GameTooltip then
         then
             return
         end
+        tooltipAnchorNeedsUpdate = true
         AnchorGameTooltip()
     end
 
@@ -222,6 +228,7 @@ if hooksecurefunc and GameTooltip_SetDefaultAnchor then
         end
         cursorAnchor:Show()
         UpdateCursorAnchor()
+        tooltipAnchorNeedsUpdate = true
         AnchorGameTooltip()
     end)
 end
@@ -241,6 +248,7 @@ GameTooltip:HookScript("OnShow", function()
     ResetTooltipTracking()
     cursorAnchor:Show()
     UpdateCursorAnchor()
+    tooltipAnchorNeedsUpdate = true
     AnchorGameTooltip()
 end)
 GameTooltip:HookScript("OnHide", function()
@@ -280,8 +288,8 @@ local FACTION_ATLASES = {
     Horde = "charcreatetest-logo-horde",
 }
 
-local function IsAccessible(value)
-    if value == nil then return false end
+IsAccessible = function(value)
+    if type(value) == "nil" then return false end
     if canaccessvalue then
         local ok, accessible = pcall(canaccessvalue, value)
         return ok and accessible
@@ -438,7 +446,12 @@ local function ResolveTooltipHealthUnit(tooltip, tooltipData)
     local unit = GetTooltipUnit(tooltip)
     if unit then return unit end
 
-    local healthGUID = tooltipData and tooltipData.healthGUID
+    if type(tooltipData) ~= "table"
+        or not IsAccessibleTable(tooltipData)
+    then
+        return nil
+    end
+    local healthGUID = tooltipData.healthGUID
     if not UnitTokenFromGUID or not IsAccessible(healthGUID) then return nil end
     local ok, resolvedUnit = pcall(UnitTokenFromGUID, healthGUID)
     if not ok
@@ -472,8 +485,9 @@ local function GetInventoryItemLinkSafely(unit, slot)
     if not GetInventoryItemLink then return nil, false end
     local ok, itemLink = pcall(GetInventoryItemLink, unit, slot)
     if not ok then return nil, false end
-    if itemLink == nil then return nil, true end
-    if not IsAccessible(itemLink) or type(itemLink) ~= "string" then
+    local itemLinkType = type(itemLink)
+    if itemLinkType == "nil" then return nil, true end
+    if not IsAccessible(itemLink) or itemLinkType ~= "string" then
         return nil, false
     end
     return itemLink, true
@@ -496,8 +510,9 @@ local function GetInventoryPvpItemLevel(unit, slot)
         local line = lines[index]
         if not IsAccessibleTable(line) then return nil, false end
         local text = line.leftText
-        if text ~= nil then
-            if not IsAccessible(text) or type(text) ~= "string" then
+        local textType = type(text)
+        if textType ~= "nil" then
+            if not IsAccessible(text) or textType ~= "string" then
                 return nil, false
             end
             local itemLevelText = text:match(pattern)
@@ -1178,6 +1193,43 @@ local function AddTargetOfTargetLine(tooltip, unit)
     tooltip.liteToolsTargetOfTargetLineAdded = true
 end
 
+local function ApplyCurrentRealm(tooltip, unit)
+    if not Addon:GetSetting("showMouseTooltipCurrentRealm")
+        or not UnitFullName
+    then
+        return
+    end
+
+    local ok, unitName, realmName = pcall(UnitFullName, unit)
+    if not ok
+        or not IsAccessible(unitName)
+        or not IsAccessible(realmName)
+        or type(unitName) ~= "string" or unitName == ""
+        or type(realmName) ~= "string" or realmName == ""
+    then
+        return
+    end
+
+    local tooltipName = tooltip:GetName() or "GameTooltip"
+    local nameLine = _G[tooltipName .. "TextLeft1"]
+    local text = nameLine and nameLine:GetText()
+    if not IsAccessible(text) or type(text) ~= "string" then return end
+
+    -- Preserve native cross-realm names and avoid appending on inspect refresh.
+    local plainText = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+    local _, plainNameEnd = plainText:find(unitName, 1, true)
+    if not plainNameEnd
+        or plainText:sub(plainNameEnd + 1):match("^%s*%-")
+    then
+        return
+    end
+
+    local nameStart, nameEnd = text:find(unitName, 1, true)
+    if not nameStart then return end
+    local fullName = string.format(FULL_PLAYER_NAME or "%s-%s", unitName, realmName)
+    nameLine:SetText(text:sub(1, nameStart - 1) .. fullName .. text:sub(nameEnd + 1))
+end
+
 local function ApplyClassColor(tooltip, unit)
     if not Addon:GetSetting("showMouseTooltipClassColor") then return end
     local ok, className, classFilename = pcall(UnitClass, unit)
@@ -1411,6 +1463,7 @@ local function AddTargetDetails(tooltip, tooltipData)
         return
     end
 
+    ApplyCurrentRealm(tooltip, unit)
     ApplyClassColor(tooltip, unit)
     local needsInspect = false
     local isPlayerUnit = SafeUnitTest(UnitIsUnit, unit, "player")
@@ -1523,6 +1576,7 @@ local function ApplyEnabled()
         if GameTooltip and GameTooltip:IsShown() then
             cursorAnchor:Show()
             UpdateCursorAnchor()
+            tooltipAnchorNeedsUpdate = true
             AnchorGameTooltip()
         else
             cursorAnchor:Hide()
@@ -1538,6 +1592,11 @@ local function ApplyEnabled()
     end
 end
 
+local function ApplyAnchorSetting()
+    tooltipAnchorNeedsUpdate = true
+    AnchorGameTooltip()
+end
+
 Addon:RegisterSetting(
     "enableMouseTooltipFollow",
     false,
@@ -1548,7 +1607,7 @@ Addon:RegisterSetting(
     "mouseTooltipAnchor",
     "BOTTOMRIGHT",
     SanitizeAnchor,
-    AnchorGameTooltip
+    ApplyAnchorSetting
 )
 Addon:RegisterSetting(
     "showMouseTooltipItemLevel",
@@ -1606,6 +1665,12 @@ Addon:RegisterSetting(
 )
 Addon:RegisterSetting(
     "showMouseTooltipTargetOfTarget",
+    false,
+    Addon.BooleanSetting,
+    ApplyDetailSetting
+)
+Addon:RegisterSetting(
+    "showMouseTooltipCurrentRealm",
     false,
     Addon.BooleanSetting,
     ApplyDetailSetting

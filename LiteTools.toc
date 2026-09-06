@@ -6,7 +6,7 @@
 ## Author: Fan
 ## Version: 2.7.0
 ## SavedVariables: LiteToolsDB, FansWowToolsDB
-## OptionalDeps: Auctionator
+## OptionalDeps: Auctionator, Platynator
 
 Core/Core.lua
 Locales/enUS.lua
@@ -19,6 +19,7 @@ Modules/WorldMap.lua
 Modules/Bags.lua
 Modules/ActionBars.lua
 Modules/MacroUI.lua
+Modules/PlatynatorMedia.lua
 Modules/MouseTooltip.lua
 Modules/Alerts.lua
 Modules/AutoRoll.lua

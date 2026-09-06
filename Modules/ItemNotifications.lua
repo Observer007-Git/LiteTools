@@ -99,7 +99,7 @@ end
 
 local function CoinIcon(atlas, size)
     local textSize = size or 12
-    local coinSize = math.max(4, math.floor(textSize * 0.35 + 0.5))
+    local coinSize = math.max(4, math.floor(textSize * 0.5 + 0.5))
     return AtlasIcon(atlas, coinSize)
 end
 
@@ -714,8 +714,13 @@ local function SetRowData(
     end
     row.accent:SetColorTexture(accentRed, accentGreen, accentBlue, 0.9)
     row.name:SetTextColor(red, green, blue, 1)
-    row.count:SetTextColor(red, green, blue, 1)
-    row.bagCount:SetTextColor(red, green, blue, 1)
+    if moneyAmount then
+        row.count:SetTextColor(red, green, blue, 1)
+        row.bagCount:SetTextColor(red, green, blue, 1)
+    else
+        row.count:SetTextColor(0.2, 1, 0.2, 1)
+        row.bagCount:SetTextColor(0.2, 1, 0.2, 1)
+    end
     row.vendorPrice:SetTextColor(red, green, blue, 1)
     row.auctionPrice:SetTextColor(red, green, blue, 1)
     RefreshRowText(row)
